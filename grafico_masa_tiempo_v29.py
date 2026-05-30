@@ -84,7 +84,7 @@ import numpy as np
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
 # ── PyQt6 ──
-from PyQt6.QtCore import Qt, QSize, QTimer, QStandardPaths, QDate, QLocale
+from PyQt6.QtCore import Qt, QSize, QTimer, QStandardPaths
 from PyQt6.QtGui import (
     QCloseEvent,
     QFont,
@@ -101,7 +101,6 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
-    QDateEdit,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -239,6 +238,7 @@ class GuiStyle:
 
     # ── Tipografías  (familia, tamaño [, estilo]) ──
     font_label:     tuple = ("Sans", 13)
+    font_section_title: tuple = ("Sans", 15, "bold")
     font_entry:     tuple = ("Sans", 14)
     font_entry_lg:  tuple = ("Sans", 16)
     font_button:    tuple = ("Sans", 12)
@@ -275,6 +275,7 @@ class GuiStyle:
     # ── Textos de rango visible del gráfico ──
     label_graph_start: str = "Inicio"
     label_graph_end:   str = "Término"
+    label_data:        str = "Dato"
 
     # ── Textos de etiquetas ──
     label_time:    str = "Hora del día"
@@ -903,15 +904,6 @@ def default_graph_date_range_from_points(
     )
     return first_date, last_date
 
-
-def qdate_from_date(d: date) -> QDate:
-    """Convierte ``datetime.date`` a ``QDate``."""
-    return QDate(int(d.year), int(d.month), int(d.day))
-
-
-def date_from_qdate(qdate: QDate) -> date:
-    """Convierte ``QDate`` a ``datetime.date``."""
-    return date(int(qdate.year()), int(qdate.month()), int(qdate.day()))
 
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
@@ -1824,6 +1816,7 @@ class MassInputApp(QWidget):
 
         # ── Construir la UI ──
         self._font_label     = self._make_font(style.font_label)
+        self._font_section_title = self._make_font(style.font_section_title)
         self._font_entry     = self._make_font(style.font_entry)
         self._font_entry_lg  = self._make_font(style.font_entry_lg)
         self._font_button    = self._make_font(style.font_button)
@@ -1977,6 +1970,70 @@ class MassInputApp(QWidget):
 
     # ----- página 1: entrada de datos ---------------------------------------
 
+    def _add_date_fields_to_grid(
+        self,
+        *,
+        grid: QGridLayout,
+        row: int,
+        col: int,
+        parent: QWidget,
+        weekday_attr: str,
+        day_attr: str,
+        month_attr: str,
+        year_attr: str,
+        on_text_changed,
+        on_month_or_year_changed,
+    ) -> None:
+        """Añade una fecha con el mismo formato visual del dato principal."""
+        s = self.style
+
+        lbl_weekday = QLabel('', parent)
+        lbl_weekday.setFont(self._font_weekday)
+        lbl_weekday.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        grid.addWidget(lbl_weekday, row, col)
+
+        entry_day = QLineEdit(parent)
+        entry_day.setFont(self._font_entry_lg)
+        entry_day.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        entry_day.setMaxLength(2)
+        entry_day.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_day))
+        grid.addWidget(entry_day, row, col + 1)
+
+        lbl_of_1 = QLabel(s.label_of, parent)
+        lbl_of_1.setFont(self._font_entry)
+        lbl_of_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(lbl_of_1, row, col + 2)
+
+        combo_month = QComboBox(parent)
+        combo_month.setFont(self._font_entry)
+        combo_month.addItems(MONTHS_ES)
+        combo_month.setEditable(False)
+        combo_month.setMinimumWidth(self._char_width(self._font_entry, s.combo_width_month))
+        grid.addWidget(combo_month, row, col + 3)
+
+        lbl_of_2 = QLabel(s.label_of, parent)
+        lbl_of_2.setFont(self._font_entry)
+        lbl_of_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        grid.addWidget(lbl_of_2, row, col + 4)
+
+        entry_year = QLineEdit(parent)
+        entry_year.setFont(self._font_entry_lg)
+        entry_year.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        entry_year.setMaxLength(4)
+        entry_year.setValidator(_IntFieldValidator(None, 4, entry_year))
+        entry_year.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_year))
+        grid.addWidget(entry_year, row, col + 5)
+
+        setattr(self, weekday_attr, lbl_weekday)
+        setattr(self, day_attr, entry_day)
+        setattr(self, month_attr, combo_month)
+        setattr(self, year_attr, entry_year)
+
+        entry_day.setValidator(_DayFieldValidator(lambda: self._current_max_day_for(combo_month, entry_year), entry_day))
+        entry_day.textChanged.connect(on_text_changed)
+        combo_month.currentIndexChanged.connect(on_month_or_year_changed)
+        entry_year.textChanged.connect(on_month_or_year_changed)
+
     def _build_input_page(self, parent: QWidget) -> None:
         """Construye la página 1 (entrada manual de hora/fecha/masa).
 
@@ -1992,45 +2049,55 @@ class MassInputApp(QWidget):
 
         # ── Rango visible del gráfico ──
         range_grid = QGridLayout()
-        range_grid.setHorizontalSpacing(s.pad_x * 2)
+        range_grid.setHorizontalSpacing(s.pad_x)
         range_grid.setVerticalSpacing(s.pad_y)
         outer.addLayout(range_grid)
 
         lbl_graph_start = QLabel(s.label_graph_start, parent)
-        lbl_graph_start.setFont(self._font_label)
+        lbl_graph_start.setFont(self._font_section_title)
         lbl_graph_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        range_grid.addWidget(lbl_graph_start, 0, 0)
+        range_grid.addWidget(lbl_graph_start, 0, 0, 1, 6)
 
         lbl_graph_end = QLabel(s.label_graph_end, parent)
-        lbl_graph_end.setFont(self._font_label)
+        lbl_graph_end.setFont(self._font_section_title)
         lbl_graph_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        range_grid.addWidget(lbl_graph_end, 0, 1)
+        range_grid.addWidget(lbl_graph_end, 0, 7, 1, 6)
 
-        graph_date_locale = QLocale(QLocale.Language.Spanish, QLocale.Country.Chile)
-        graph_date_min = qdate_from_date(MIN_GRAPH_START_DATE)
-        graph_date_max = qdate_from_date(date(MAX_YEAR, 12, 31))
+        self._add_date_fields_to_grid(
+            grid=range_grid,
+            row=1,
+            col=0,
+            parent=parent,
+            weekday_attr='_lbl_graph_start_weekday',
+            day_attr='_entry_graph_start_day',
+            month_attr='_combo_graph_start_month',
+            year_attr='_entry_graph_start_year',
+            on_text_changed=self._on_graph_start_date_text_changed,
+            on_month_or_year_changed=self._on_graph_start_month_or_year_changed,
+        )
+        self._add_date_fields_to_grid(
+            grid=range_grid,
+            row=1,
+            col=7,
+            parent=parent,
+            weekday_attr='_lbl_graph_end_weekday',
+            day_attr='_entry_graph_end_day',
+            month_attr='_combo_graph_end_month',
+            year_attr='_entry_graph_end_year',
+            on_text_changed=self._on_graph_end_date_text_changed,
+            on_month_or_year_changed=self._on_graph_end_month_or_year_changed,
+        )
 
-        self._date_graph_start = QDateEdit(parent)
-        self._date_graph_start.setFont(self._font_entry)
-        self._date_graph_start.setLocale(graph_date_locale)
-        self._date_graph_start.setDisplayFormat("dddd d 'de' MMMM 'de' yyyy")
-        self._date_graph_start.setCalendarPopup(True)
-        self._date_graph_start.setMinimumDate(graph_date_min)
-        self._date_graph_start.setMaximumDate(graph_date_max)
-        self._date_graph_start.setMinimumWidth(self._char_width(self._font_entry, s.date_edit_width, padding=28))
-        self._date_graph_start.dateChanged.connect(lambda _qdate: self._on_graph_date_range_changed())
-        range_grid.addWidget(self._date_graph_start, 1, 0)
+        # Separador visual entre el rango del gráfico y el dato a registrar.
+        sep_range_data = QFrame(parent)
+        sep_range_data.setFrameShape(QFrame.Shape.HLine)
+        sep_range_data.setFrameShadow(QFrame.Shadow.Sunken)
+        outer.addWidget(sep_range_data)
 
-        self._date_graph_end = QDateEdit(parent)
-        self._date_graph_end.setFont(self._font_entry)
-        self._date_graph_end.setLocale(graph_date_locale)
-        self._date_graph_end.setDisplayFormat("dddd d 'de' MMMM 'de' yyyy")
-        self._date_graph_end.setCalendarPopup(True)
-        self._date_graph_end.setMinimumDate(graph_date_min.addDays(MIN_GRAPH_RANGE_DAYS))
-        self._date_graph_end.setMaximumDate(graph_date_max)
-        self._date_graph_end.setMinimumWidth(self._char_width(self._font_entry, s.date_edit_width, padding=28))
-        self._date_graph_end.dateChanged.connect(lambda _qdate: self._on_graph_date_range_changed())
-        range_grid.addWidget(self._date_graph_end, 1, 1)
+        lbl_data_section = QLabel(s.label_data, parent)
+        lbl_data_section.setFont(self._font_section_title)
+        lbl_data_section.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(lbl_data_section)
 
         # ── Grid principal de campos ──
         grid = QGridLayout()
@@ -2178,7 +2245,8 @@ class MassInputApp(QWidget):
         self._shortcut_continue_enter.activated.connect(self._on_continue)
 
         self._interactive_widgets.extend([
-            self._date_graph_start, self._date_graph_end,
+            self._entry_graph_start_day, self._combo_graph_start_month, self._entry_graph_start_year,
+            self._entry_graph_end_day, self._combo_graph_end_month, self._entry_graph_end_year,
             self._entry_hour, self._entry_minute, self._entry_day,
             self._combo_month, self._entry_year, self._entry_mass,
             self._btn_reset_datetime, self._btn_continue, self._btn_view_graph_only,
@@ -2391,7 +2459,7 @@ class MassInputApp(QWidget):
     # ----- rango visible del gráfico ----------------------------------------
 
     def _set_graph_date_range(self, start_date: date, end_date: date) -> None:
-        """Carga el rango visible del gráfico en los QDateEdit de la página 1."""
+        """Carga el rango visible del gráfico en los campos manuales de la página 1."""
         start_date = max(start_date, MIN_GRAPH_START_DATE)
         end_date = max(end_date, start_date + timedelta(days=MIN_GRAPH_RANGE_DAYS))
         max_date = date(MAX_YEAR, 12, 31)
@@ -2400,21 +2468,29 @@ class MassInputApp(QWidget):
         if start_date >= end_date:
             start_date = max(MIN_GRAPH_START_DATE, end_date - timedelta(days=MIN_GRAPH_RANGE_DAYS))
 
-        for editor in (self._date_graph_start, self._date_graph_end):
-            editor.blockSignals(True)
+        widgets = (
+            self._entry_graph_start_day,
+            self._combo_graph_start_month,
+            self._entry_graph_start_year,
+            self._entry_graph_end_day,
+            self._combo_graph_end_month,
+            self._entry_graph_end_year,
+        )
+        for widget in widgets:
+            widget.blockSignals(True)
         try:
-            graph_date_min = qdate_from_date(MIN_GRAPH_START_DATE)
-            graph_date_max = qdate_from_date(max_date)
-            self._date_graph_start.setMinimumDate(graph_date_min)
-            self._date_graph_start.setMaximumDate(graph_date_max)
-            self._date_graph_end.setMinimumDate(graph_date_min.addDays(MIN_GRAPH_RANGE_DAYS))
-            self._date_graph_end.setMaximumDate(graph_date_max)
-            self._date_graph_start.setDate(qdate_from_date(start_date))
-            self._date_graph_end.setDate(qdate_from_date(end_date))
+            self._entry_graph_start_day.setText(str(start_date.day))
+            self._combo_graph_start_month.setCurrentIndex(start_date.month - 1)
+            self._entry_graph_start_year.setText(str(start_date.year))
+            self._entry_graph_end_day.setText(str(end_date.day))
+            self._combo_graph_end_month.setCurrentIndex(end_date.month - 1)
+            self._entry_graph_end_year.setText(str(end_date.year))
         finally:
-            for editor in (self._date_graph_start, self._date_graph_end):
-                editor.blockSignals(False)
-        self._sync_graph_date_edit_bounds()
+            for widget in widgets:
+                widget.blockSignals(False)
+
+        self._refresh_graph_start_weekday()
+        self._refresh_graph_end_weekday()
 
     def _fill_default_graph_date_range_from_csv(self) -> None:
         """Inicializa Inicio/Término del gráfico según el CSV actual."""
@@ -2430,60 +2506,95 @@ class MassInputApp(QWidget):
             f'inicio={start_date.isoformat()}, término={end_date.isoformat()}.'
         )
 
-    def _sync_graph_date_edit_bounds(self) -> None:
-        """Mantiene las cotas de Inicio/Término coherentes en la GUI."""
-        min_start = qdate_from_date(MIN_GRAPH_START_DATE)
-        max_date = qdate_from_date(date(MAX_YEAR, 12, 31))
+    def _on_graph_start_date_text_changed(self, *_args) -> None:
+        """Actualiza el día de semana de Inicio al editar su día."""
+        self._refresh_graph_start_weekday()
 
-        start_qdate = self._date_graph_start.date()
-        end_qdate = self._date_graph_end.date()
+    def _on_graph_end_date_text_changed(self, *_args) -> None:
+        """Actualiza el día de semana de Término al editar su día."""
+        self._refresh_graph_end_weekday()
 
-        min_end = start_qdate.addDays(MIN_GRAPH_RANGE_DAYS)
-        if min_end > max_date:
-            min_end = max_date
+    def _on_graph_start_month_or_year_changed(self, *_args) -> None:
+        """Ajusta Inicio si el nuevo mes/año no contiene el día actual."""
+        self._truncate_day_for_fields(
+            self._entry_graph_start_day,
+            self._combo_graph_start_month,
+            self._entry_graph_start_year,
+            self._lbl_graph_start_weekday,
+            log_prefix='Inicio',
+        )
 
-        self._date_graph_end.blockSignals(True)
+    def _on_graph_end_month_or_year_changed(self, *_args) -> None:
+        """Ajusta Término si el nuevo mes/año no contiene el día actual."""
+        self._truncate_day_for_fields(
+            self._entry_graph_end_day,
+            self._combo_graph_end_month,
+            self._entry_graph_end_year,
+            self._lbl_graph_end_weekday,
+            log_prefix='Término',
+        )
+
+    def _refresh_graph_start_weekday(self) -> None:
+        """Actualiza el día de semana mostrado para Inicio."""
+        self._refresh_weekday_for_fields(
+            self._entry_graph_start_day,
+            self._combo_graph_start_month,
+            self._entry_graph_start_year,
+            self._lbl_graph_start_weekday,
+        )
+
+    def _refresh_graph_end_weekday(self) -> None:
+        """Actualiza el día de semana mostrado para Término."""
+        self._refresh_weekday_for_fields(
+            self._entry_graph_end_day,
+            self._combo_graph_end_month,
+            self._entry_graph_end_year,
+            self._lbl_graph_end_weekday,
+        )
+
+    def _parse_date_fields(
+        self,
+        *,
+        day_entry: QLineEdit,
+        month_combo: QComboBox,
+        year_entry: QLineEdit,
+        error_msg: str,
+    ) -> date | None:
+        """Valida una fecha manual y devuelve ``date`` o None."""
         try:
-            self._date_graph_end.setMinimumDate(min_end)
-            self._date_graph_end.setMaximumDate(max_date)
-            if self._date_graph_end.date() < min_end:
-                self._date_graph_end.setDate(min_end)
-        finally:
-            self._date_graph_end.blockSignals(False)
-
-        end_qdate = self._date_graph_end.date()
-        max_start = end_qdate.addDays(-MIN_GRAPH_RANGE_DAYS)
-        if max_start < min_start:
-            max_start = min_start
-
-        self._date_graph_start.blockSignals(True)
-        try:
-            self._date_graph_start.setMinimumDate(min_start)
-            self._date_graph_start.setMaximumDate(max_start)
-            if self._date_graph_start.date() < min_start:
-                self._date_graph_start.setDate(min_start)
-            if self._date_graph_start.date() > max_start:
-                self._date_graph_start.setDate(max_start)
-        finally:
-            self._date_graph_start.blockSignals(False)
-
-    def _on_graph_date_range_changed(self) -> None:
-        """Reacciona a cambios en Inicio/Término y conserva al menos un día."""
-        self._sync_graph_date_edit_bounds()
+            year = int(year_entry.text())
+            if not (MIN_YEAR <= year <= MAX_YEAR):
+                raise ValueError
+            month = self._current_month_index_for(month_combo)
+            if not (1 <= month <= 12):
+                raise ValueError
+            day = int(day_entry.text())
+            day_max = max_day_in_month(month, year)
+            if not (MIN_DAY <= day <= day_max):
+                raise ValueError
+            return date(year, month, day)
+        except (ValueError, TypeError, OverflowError):
+            self._lbl_error.setText(error_msg)
+            return None
 
     def _parse_graph_date_range(self) -> tuple[date, date] | None:
         """Valida y devuelve el rango visible del gráfico como fechas civiles."""
         s = self.style
-        self._sync_graph_date_edit_bounds()
-        try:
-            start_date = date_from_qdate(self._date_graph_start.date())
-        except (ValueError, TypeError, OverflowError):
-            self._lbl_error.setText(s.error_invalid_graph_start)
+        start_date = self._parse_date_fields(
+            day_entry=self._entry_graph_start_day,
+            month_combo=self._combo_graph_start_month,
+            year_entry=self._entry_graph_start_year,
+            error_msg=s.error_invalid_graph_start,
+        )
+        if start_date is None:
             return None
-        try:
-            end_date = date_from_qdate(self._date_graph_end.date())
-        except (ValueError, TypeError, OverflowError):
-            self._lbl_error.setText(s.error_invalid_graph_end)
+        end_date = self._parse_date_fields(
+            day_entry=self._entry_graph_end_day,
+            month_combo=self._combo_graph_end_month,
+            year_entry=self._entry_graph_end_year,
+            error_msg=s.error_invalid_graph_end,
+        )
+        if end_date is None:
             return None
         if start_date < MIN_GRAPH_START_DATE:
             self._lbl_error.setText(s.error_graph_start_before_min)
@@ -2516,49 +2627,94 @@ class MassInputApp(QWidget):
         self._lbl_error.setText('')
         log_info(f'Fecha/hora reseteada a {now.strftime(TIMESTAMP_FORMAT)}.')
 
-    def _current_month_index(self) -> int:
-        """Devuelve el mes actual como 1..12, o 0 si no hay selección válida."""
-        index = int(self._combo_month.currentIndex())
+    def _current_month_index_for(self, combo_month: QComboBox) -> int:
+        """Devuelve el mes de un QComboBox como 1..12, o 0 si no es válido."""
+        index = int(combo_month.currentIndex())
         return index + 1 if 0 <= index < 12 else 0
 
-    def _current_year_value(self) -> int:
-        """Devuelve el año actual o 0 si es inválido / fuera de rango."""
+    def _current_year_value_for(self, entry_year: QLineEdit) -> int:
+        """Devuelve el año de un QLineEdit, o 0 si es inválido / fuera de rango."""
         try:
-            y = int(self._entry_year.text())
+            y = int(entry_year.text())
             return y if MIN_YEAR <= y <= MAX_YEAR else 0
         except (ValueError, TypeError):
             return 0
 
-    def _current_max_day(self) -> int:
-        """Devuelve cuántos días tiene el mes/año seleccionado actualmente."""
-        m = self._current_month_index()
-        y = self._current_year_value()
+    def _current_max_day_for(self, combo_month: QComboBox, entry_year: QLineEdit) -> int:
+        """Devuelve el máximo día válido para un par mes/año manual."""
+        m = self._current_month_index_for(combo_month)
+        y = self._current_year_value_for(entry_year)
         return max_day_in_month(m, y) if m and y else MAX_DAY
 
-    def _on_month_or_year_changed(self, *_args) -> None:
-        """Trunca el día si el nuevo mes/año es más corto que el día actual."""
-        mx = self._current_max_day()
+    def _current_month_index(self) -> int:
+        """Devuelve el mes del dato como 1..12, o 0 si no hay selección válida."""
+        return self._current_month_index_for(self._combo_month)
+
+    def _current_year_value(self) -> int:
+        """Devuelve el año del dato o 0 si es inválido / fuera de rango."""
+        return self._current_year_value_for(self._entry_year)
+
+    def _current_max_day(self) -> int:
+        """Devuelve cuántos días tiene el mes/año seleccionado para el dato."""
+        return self._current_max_day_for(self._combo_month, self._entry_year)
+
+    def _truncate_day_for_fields(
+        self,
+        day_entry: QLineEdit,
+        month_combo: QComboBox,
+        year_entry: QLineEdit,
+        weekday_label: QLabel,
+        *,
+        log_prefix: str,
+    ) -> None:
+        """Trunca un día si el mes/año seleccionado no lo contiene."""
+        mx = self._current_max_day_for(month_combo, year_entry)
         try:
-            d = int(self._entry_day.text())
+            d = int(day_entry.text())
             if d > mx:
-                self._entry_day.setText(str(mx))
-                log_info(f'Día ajustado a {mx} (máximo del mes seleccionado).')
+                day_entry.setText(str(mx))
+                log_info(f'{log_prefix}: día ajustado a {mx} (máximo del mes seleccionado).')
         except (ValueError, TypeError):
             pass
-        self._refresh_weekday()
+        self._refresh_weekday_for_fields(day_entry, month_combo, year_entry, weekday_label)
 
-    def _refresh_weekday(self, *_args) -> None:
-        """Actualiza la etiqueta textual del día de la semana."""
+    def _on_month_or_year_changed(self, *_args) -> None:
+        """Trunca el día del dato si el nuevo mes/año es más corto."""
+        self._truncate_day_for_fields(
+            self._entry_day,
+            self._combo_month,
+            self._entry_year,
+            self._lbl_weekday,
+            log_prefix='Dato',
+        )
+
+    def _refresh_weekday_for_fields(
+        self,
+        day_entry: QLineEdit,
+        month_combo: QComboBox,
+        year_entry: QLineEdit,
+        weekday_label: QLabel,
+    ) -> None:
+        """Actualiza una etiqueta textual del día de la semana."""
         try:
-            d = int(self._entry_day.text())
-            m = self._current_month_index()
-            y = self._current_year_value()
+            d = int(day_entry.text())
+            m = self._current_month_index_for(month_combo)
+            y = self._current_year_value_for(year_entry)
             if d and m and y:
-                self._lbl_weekday.setText(WEEKDAYS_ES[date(y, m, d).weekday()])
+                weekday_label.setText(WEEKDAYS_ES[date(y, m, d).weekday()])
                 return
         except (ValueError, TypeError, OverflowError):
             pass
-        self._lbl_weekday.setText('')
+        weekday_label.setText('')
+
+    def _refresh_weekday(self, *_args) -> None:
+        """Actualiza la etiqueta textual del día de la semana del dato."""
+        self._refresh_weekday_for_fields(
+            self._entry_day,
+            self._combo_month,
+            self._entry_year,
+            self._lbl_weekday,
+        )
 
     # ----- validación y parseo de la entrada completa -----------------------
 
