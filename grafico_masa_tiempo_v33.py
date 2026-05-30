@@ -297,7 +297,7 @@ class GuiStyle:
     error_invalid_mass:      str = "Masa inválida"
     error_invalid_graph_start: str = "Fecha de inicio del gráfico inválida"
     error_invalid_graph_end:   str = "Fecha de término del gráfico inválida"
-    error_graph_range_too_short: str = "Entre inicio y término del gráfico debe haber al menos 1 día"
+    error_graph_range_too_short: str = "La fecha de término no puede ser la misma o antes de la fecha de inicio"
     error_graph_start_before_min: str = "El inicio del gráfico no puede ser anterior al 1970-01-02"
     error_fatal:             str = "Error fatal — ver detalles abajo"
 
@@ -1859,6 +1859,7 @@ class MassInputApp(QWidget):
         self._refresh_weekday()
         self._update_preview_smoothness_label()
         self._show_input_page()
+        self._update_graph_range_control_state(show_error=True)
 
         # La geometría inicial depende de que las páginas estén medidas por
         # Qt.  Hacemos eso con setFixedSize a partir del sizeHint actual.
@@ -2569,6 +2570,73 @@ class MassInputApp(QWidget):
 
     # ----- rango visible del gráfico ----------------------------------------
 
+    def _read_date_fields_silent(
+        self,
+        *,
+        day_entry: QLineEdit,
+        month_combo: QComboBox,
+        year_entry: QLineEdit,
+    ) -> date | None:
+        """Lee una fecha manual sin alterar la etiqueta de error."""
+        try:
+            year = int(year_entry.text())
+            if not (MIN_YEAR <= year <= MAX_YEAR):
+                return None
+            month = self._current_month_index_for(month_combo)
+            if not (1 <= month <= 12):
+                return None
+            day = int(day_entry.text())
+            day_max = max_day_in_month(month, year)
+            if not (MIN_DAY <= day <= day_max):
+                return None
+            return date(year, month, day)
+        except (ValueError, TypeError, OverflowError):
+            return None
+
+    def _graph_range_validation_error(self) -> str | None:
+        """Devuelve el mensaje de error del rango del gráfico, o None si es válido."""
+        s = self.style
+        start_date = self._read_date_fields_silent(
+            day_entry=self._entry_graph_start_day,
+            month_combo=self._combo_graph_start_month,
+            year_entry=self._entry_graph_start_year,
+        )
+        if start_date is None:
+            return s.error_invalid_graph_start
+
+        end_date = self._read_date_fields_silent(
+            day_entry=self._entry_graph_end_day,
+            month_combo=self._combo_graph_end_month,
+            year_entry=self._entry_graph_end_year,
+        )
+        if end_date is None:
+            return s.error_invalid_graph_end
+
+        if start_date < MIN_GRAPH_START_DATE:
+            return s.error_graph_start_before_min
+
+        # MIN_GRAPH_RANGE_DAYS vale 1: el término debe ser estrictamente posterior
+        # al inicio.  Usamos el texto específico pedido para evitar el fatal error.
+        if (end_date - start_date).days < MIN_GRAPH_RANGE_DAYS:
+            return s.error_graph_range_too_short
+
+        return None
+
+    def _update_graph_range_control_state(self, *, show_error: bool = True) -> bool:
+        """Habilita Continuar/Sólo ver gráfico sólo si el rango visible es válido."""
+        error = self._graph_range_validation_error()
+        valid = error is None
+
+        if hasattr(self, '_btn_continue'):
+            self._btn_continue.setEnabled(valid)
+        if hasattr(self, '_btn_view_graph_only'):
+            self._btn_view_graph_only.setEnabled(valid)
+
+        if show_error and hasattr(self, '_lbl_error'):
+            self._lbl_error.setText('' if valid else str(error))
+
+        return valid
+
     def _set_graph_date_range(self, start_date: date, end_date: date) -> None:
         """Carga el rango visible del gráfico en los campos manuales de la página 1."""
         start_date = max(start_date, MIN_GRAPH_START_DATE)
@@ -2602,6 +2670,8 @@ class MassInputApp(QWidget):
 
         self._refresh_graph_start_weekday()
         self._refresh_graph_end_weekday()
+        if hasattr(self, '_btn_continue'):
+            self._update_graph_range_control_state(show_error=True)
 
     def _fill_default_graph_date_range_from_csv(self) -> None:
         """Inicializa Inicio/Término del gráfico según el CSV actual."""
@@ -2618,15 +2688,17 @@ class MassInputApp(QWidget):
         )
 
     def _on_graph_start_date_text_changed(self, *_args) -> None:
-        """Actualiza el día de semana de Inicio al editar su día."""
+        """Actualiza el día de semana de Inicio y valida inmediatamente el rango."""
         self._refresh_graph_start_weekday()
+        self._update_graph_range_control_state(show_error=True)
 
     def _on_graph_end_date_text_changed(self, *_args) -> None:
-        """Actualiza el día de semana de Término al editar su día."""
+        """Actualiza el día de semana de Término y valida inmediatamente el rango."""
         self._refresh_graph_end_weekday()
+        self._update_graph_range_control_state(show_error=True)
 
     def _on_graph_start_month_or_year_changed(self, *_args) -> None:
-        """Ajusta Inicio si el nuevo mes/año no contiene el día actual."""
+        """Ajusta Inicio si el nuevo mes/año no contiene el día actual y valida."""
         self._truncate_day_for_fields(
             self._entry_graph_start_day,
             self._combo_graph_start_month,
@@ -2634,9 +2706,10 @@ class MassInputApp(QWidget):
             self._lbl_graph_start_weekday,
             log_prefix='Inicio',
         )
+        self._update_graph_range_control_state(show_error=True)
 
     def _on_graph_end_month_or_year_changed(self, *_args) -> None:
-        """Ajusta Término si el nuevo mes/año no contiene el día actual."""
+        """Ajusta Término si el nuevo mes/año no contiene el día actual y valida."""
         self._truncate_day_for_fields(
             self._entry_graph_end_day,
             self._combo_graph_end_month,
@@ -2644,6 +2717,7 @@ class MassInputApp(QWidget):
             self._lbl_graph_end_weekday,
             log_prefix='Término',
         )
+        self._update_graph_range_control_state(show_error=True)
 
     def _refresh_graph_start_weekday(self) -> None:
         """Actualiza el día de semana mostrado para Inicio."""
@@ -3196,6 +3270,7 @@ class MassInputApp(QWidget):
         """Volver a la página 1 manteniendo los datos de entrada."""
         self._show_input_page()
         self._set_widgets_state(self._interactive_widgets, enabled=True)
+        self._update_graph_range_control_state(show_error=True)
 
     def _on_reset_preview(self) -> None:
         """Restablece la suavidad y las opciones iniciales del gráfico."""
@@ -3208,6 +3283,8 @@ class MassInputApp(QWidget):
 
     def _on_continue(self) -> None:
         """Validar la página 1 y abrir la vista previa con la nueva masa."""
+        if not self._update_graph_range_control_state(show_error=True):
+            return
         self._lbl_error.setText('')
         self._set_widgets_state(self._interactive_widgets, enabled=False)
         QApplication.processEvents()
@@ -3215,6 +3292,7 @@ class MassInputApp(QWidget):
             self._prepare_preview(add_new_point=True)
         except ValueError:
             self._set_widgets_state(self._interactive_widgets, enabled=True)
+            self._update_graph_range_control_state(show_error=False)
             return
         except Exception:
             tb = traceback.format_exc()
@@ -3227,11 +3305,17 @@ class MassInputApp(QWidget):
 
     def _on_view_graph_only(self) -> None:
         """Abre la vista previa del gráfico sin añadir una masa nueva."""
+        if not self._update_graph_range_control_state(show_error=True):
+            return
         self._lbl_error.setText('')
         self._set_widgets_state(self._interactive_widgets, enabled=False)
         QApplication.processEvents()
         try:
             self._prepare_preview(add_new_point=False)
+        except ValueError:
+            self._set_widgets_state(self._interactive_widgets, enabled=True)
+            self._update_graph_range_control_state(show_error=True)
+            return
         except Exception:
             tb = traceback.format_exc()
             log_error(f'Error no recuperable:\n{tb}')
