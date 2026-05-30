@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-grafico_masa_tiempo_suavizado_v20.py
+grafico_masa_tiempo_v28.py
 ════════════════════════════════════
 Registra masa corporal mediante una ventana gráfica (PyQt6), la almacena
 en un archivo CSV con formato ``día;masa;fecha`` y genera un gráfico PNG
@@ -84,7 +84,7 @@ import numpy as np
 from matplotlib.ticker import FuncFormatter, MultipleLocator
 
 # ── PyQt6 ──
-from PyQt6.QtCore import Qt, QSize, QTimer, QStandardPaths
+from PyQt6.QtCore import Qt, QSize, QTimer, QStandardPaths, QDate, QLocale
 from PyQt6.QtGui import (
     QCloseEvent,
     QFont,
@@ -101,6 +101,7 @@ from PyQt6.QtWidgets import (
     QApplication,
     QCheckBox,
     QComboBox,
+    QDateEdit,
     QFileDialog,
     QFrame,
     QGridLayout,
@@ -143,6 +144,11 @@ MAX_DAY:    int   = 31      # Día máximo (se reduce según mes/año)
 
 MIN_YEAR:   int   = 1900    # Año mínimo aceptado
 MAX_YEAR:   int   = 2100    # Año máximo aceptado
+
+# Fecha mínima permitida para el inicio visible del gráfico.
+# Equivale a un timestamp Unix >= 86400 s.
+MIN_GRAPH_START_DATE: date = date(1970, 1, 2)
+MIN_GRAPH_RANGE_DAYS: int = 1
 
 MIN_MASS:   float = 0.0     # Masa mínima en kg
 MAX_MASS:   float = 500.0   # Masa máxima en kg
@@ -266,6 +272,10 @@ class GuiStyle:
     text_preview_show_derivative:  str = "Diferencial tendencia [kg/sem] 🟥⋯"
     text_preview_show_points:      str = "Muestras 🟧"
 
+    # ── Textos de rango visible del gráfico ──
+    label_graph_start: str = "Inicio"
+    label_graph_end:   str = "Término"
+
     # ── Textos de etiquetas ──
     label_time:    str = "Hora del día"
     label_date:    str = "Fecha"
@@ -283,6 +293,10 @@ class GuiStyle:
     error_invalid_timestamp: str = "Timestamp inválido"
     error_empty_mass:        str = "Masa vacía"
     error_invalid_mass:      str = "Masa inválida"
+    error_invalid_graph_start: str = "Fecha de inicio del gráfico inválida"
+    error_invalid_graph_end:   str = "Fecha de término del gráfico inválida"
+    error_graph_range_too_short: str = "Entre inicio y término del gráfico debe haber al menos 1 día"
+    error_graph_start_before_min: str = "El inicio del gráfico no puede ser anterior al 1970-01-02"
     error_fatal:             str = "Error fatal — ver detalles abajo"
 
     # ── Dimensiones de widgets ──
@@ -290,6 +304,7 @@ class GuiStyle:
     entry_width_day:   int = 3    # Ancho del campo día
     entry_width_year:  int = 5    # Ancho del campo año
     entry_width_mass:  int = 10   # Ancho del campo masa
+    date_edit_width:   int = 27   # Ancho aproximado de fechas del gráfico
     combo_width_month: int = 12   # Ancho del combobox de mes
     button_width_sm:   int = 14   # Ancho de botones pequeños
     button_width_lg:   int = 16   # Ancho del botón grande
@@ -825,6 +840,78 @@ def build_date_formatter(start_date: date):
         d = start_date + timedelta(days=int(round(day_value)))
         return f"{MONTHS_ES_ABBR[d.month - 1]}-{d.day:02d}"
     return formatter
+
+
+def add_months(d: date, months: int) -> date:
+    """Suma meses calendario a una fecha, ajustando el día si el mes es más corto."""
+    month_index = d.month - 1 + int(months)
+    year = d.year + month_index // 12
+    month = month_index % 12 + 1
+    day = min(d.day, calendar.monthrange(year, month)[1])
+    return date(year, month, day)
+
+
+def add_years(d: date, years: int) -> date:
+    """Suma años calendario a una fecha, ajustando 29/feb si corresponde."""
+    try:
+        return d.replace(year=d.year + int(years))
+    except ValueError:
+        # 29 de febrero → 28 de febrero en años no bisiestos.
+        return d.replace(year=d.year + int(years), day=28)
+
+
+def date_from_day_value(start_date: date, day_value: float) -> date:
+    """Convierte un día fraccionario del CSV a la fecha civil que lo contiene."""
+    day_offset = int(math.floor(float(day_value)))
+    return start_date + timedelta(days=day_offset)
+
+
+def default_graph_date_range_from_points(
+    points: list[tuple[float, float]],
+    config: PlotConfig,
+    fallback_today: date | None = None,
+) -> tuple[date, date]:
+    """Calcula el rango visible inicial del gráfico a partir de puntos válidos.
+
+    Si hay datos, usa el menor día válido como inicio y el mayor día válido
+    como último dato registrado.  Esto cubre naturalmente CSV con días
+    negativos: el valor más negativo queda al inicio y el valor menos negativo
+    o más positivo queda al final.
+
+    Si no hay datos válidos, usa la fecha de hoy como inicio.  En ambos casos
+    el término queda en max(1 mes después del último dato, 1 año después del
+    inicio) y se fuerza una separación mínima de un día.
+    """
+    valid_days = [
+        float(day_value)
+        for day_value, _mass in points
+        if math.isfinite(float(day_value))
+    ]
+
+    if valid_days:
+        first_date = date_from_day_value(config.start_date, min(valid_days))
+        last_data_date = date_from_day_value(config.start_date, max(valid_days))
+    else:
+        first_date = fallback_today or datetime.now().date()
+        last_data_date = first_date
+
+    first_date = max(first_date, MIN_GRAPH_START_DATE)
+    last_date = max(
+        add_months(last_data_date, 1),
+        add_years(first_date, 1),
+        first_date + timedelta(days=MIN_GRAPH_RANGE_DAYS),
+    )
+    return first_date, last_date
+
+
+def qdate_from_date(d: date) -> QDate:
+    """Convierte ``datetime.date`` a ``QDate``."""
+    return QDate(int(d.year), int(d.month), int(d.day))
+
+
+def date_from_qdate(qdate: QDate) -> date:
+    """Convierte ``QDate`` a ``datetime.date``."""
+    return date(int(qdate.year()), int(qdate.month()), int(qdate.day()))
 
 
 # ╔════════════════════════════════════════════════════════════════════════════╗
@@ -1760,6 +1847,7 @@ class MassInputApp(QWidget):
         # Rellenar la hora actual antes de conectar los signals para evitar
         # ruido en el log.
         self._fill_with_current_datetime()
+        self._fill_default_graph_date_range_from_csv()
 
         # Conectar los cambios reactivos del día/mes/año para refrescar el
         # texto del día de la semana (equivalente a trace_add('write', ...)).
@@ -1901,6 +1989,48 @@ class MassInputApp(QWidget):
         outer = QVBoxLayout(parent)
         outer.setContentsMargins(s.pad_main_x, s.pad_main_y, s.pad_main_x, s.pad_main_y)
         outer.setSpacing(s.pad_y)
+
+        # ── Rango visible del gráfico ──
+        range_grid = QGridLayout()
+        range_grid.setHorizontalSpacing(s.pad_x * 2)
+        range_grid.setVerticalSpacing(s.pad_y)
+        outer.addLayout(range_grid)
+
+        lbl_graph_start = QLabel(s.label_graph_start, parent)
+        lbl_graph_start.setFont(self._font_label)
+        lbl_graph_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        range_grid.addWidget(lbl_graph_start, 0, 0)
+
+        lbl_graph_end = QLabel(s.label_graph_end, parent)
+        lbl_graph_end.setFont(self._font_label)
+        lbl_graph_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        range_grid.addWidget(lbl_graph_end, 0, 1)
+
+        graph_date_locale = QLocale(QLocale.Language.Spanish, QLocale.Country.Chile)
+        graph_date_min = qdate_from_date(MIN_GRAPH_START_DATE)
+        graph_date_max = qdate_from_date(date(MAX_YEAR, 12, 31))
+
+        self._date_graph_start = QDateEdit(parent)
+        self._date_graph_start.setFont(self._font_entry)
+        self._date_graph_start.setLocale(graph_date_locale)
+        self._date_graph_start.setDisplayFormat("dddd d 'de' MMMM 'de' yyyy")
+        self._date_graph_start.setCalendarPopup(True)
+        self._date_graph_start.setMinimumDate(graph_date_min)
+        self._date_graph_start.setMaximumDate(graph_date_max)
+        self._date_graph_start.setMinimumWidth(self._char_width(self._font_entry, s.date_edit_width, padding=28))
+        self._date_graph_start.dateChanged.connect(lambda _qdate: self._on_graph_date_range_changed())
+        range_grid.addWidget(self._date_graph_start, 1, 0)
+
+        self._date_graph_end = QDateEdit(parent)
+        self._date_graph_end.setFont(self._font_entry)
+        self._date_graph_end.setLocale(graph_date_locale)
+        self._date_graph_end.setDisplayFormat("dddd d 'de' MMMM 'de' yyyy")
+        self._date_graph_end.setCalendarPopup(True)
+        self._date_graph_end.setMinimumDate(graph_date_min.addDays(MIN_GRAPH_RANGE_DAYS))
+        self._date_graph_end.setMaximumDate(graph_date_max)
+        self._date_graph_end.setMinimumWidth(self._char_width(self._font_entry, s.date_edit_width, padding=28))
+        self._date_graph_end.dateChanged.connect(lambda _qdate: self._on_graph_date_range_changed())
+        range_grid.addWidget(self._date_graph_end, 1, 1)
 
         # ── Grid principal de campos ──
         grid = QGridLayout()
@@ -2048,6 +2178,7 @@ class MassInputApp(QWidget):
         self._shortcut_continue_enter.activated.connect(self._on_continue)
 
         self._interactive_widgets.extend([
+            self._date_graph_start, self._date_graph_end,
             self._entry_hour, self._entry_minute, self._entry_day,
             self._combo_month, self._entry_year, self._entry_mass,
             self._btn_reset_datetime, self._btn_continue, self._btn_view_graph_only,
@@ -2256,6 +2387,121 @@ class MassInputApp(QWidget):
         raw = self._slider_min + int(value) * self._slider_step
         clipped = min(max(raw, self._slider_min), self._slider_max)
         return round(clipped, 6)
+
+    # ----- rango visible del gráfico ----------------------------------------
+
+    def _set_graph_date_range(self, start_date: date, end_date: date) -> None:
+        """Carga el rango visible del gráfico en los QDateEdit de la página 1."""
+        start_date = max(start_date, MIN_GRAPH_START_DATE)
+        end_date = max(end_date, start_date + timedelta(days=MIN_GRAPH_RANGE_DAYS))
+        max_date = date(MAX_YEAR, 12, 31)
+        if end_date > max_date:
+            end_date = max_date
+        if start_date >= end_date:
+            start_date = max(MIN_GRAPH_START_DATE, end_date - timedelta(days=MIN_GRAPH_RANGE_DAYS))
+
+        for editor in (self._date_graph_start, self._date_graph_end):
+            editor.blockSignals(True)
+        try:
+            graph_date_min = qdate_from_date(MIN_GRAPH_START_DATE)
+            graph_date_max = qdate_from_date(max_date)
+            self._date_graph_start.setMinimumDate(graph_date_min)
+            self._date_graph_start.setMaximumDate(graph_date_max)
+            self._date_graph_end.setMinimumDate(graph_date_min.addDays(MIN_GRAPH_RANGE_DAYS))
+            self._date_graph_end.setMaximumDate(graph_date_max)
+            self._date_graph_start.setDate(qdate_from_date(start_date))
+            self._date_graph_end.setDate(qdate_from_date(end_date))
+        finally:
+            for editor in (self._date_graph_start, self._date_graph_end):
+                editor.blockSignals(False)
+        self._sync_graph_date_edit_bounds()
+
+    def _fill_default_graph_date_range_from_csv(self) -> None:
+        """Inicializa Inicio/Término del gráfico según el CSV actual."""
+        try:
+            _rows, points = self._build_current_rows_and_points()
+            start_date, end_date = default_graph_date_range_from_points(points, self.config)
+        except Exception as exc:
+            log_warn(f'No se pudo calcular el rango inicial desde el CSV ({exc}); se usará hoy.')
+            start_date, end_date = default_graph_date_range_from_points([], self.config)
+        self._set_graph_date_range(start_date, end_date)
+        log_info(
+            'Rango visible inicial del gráfico → '
+            f'inicio={start_date.isoformat()}, término={end_date.isoformat()}.'
+        )
+
+    def _sync_graph_date_edit_bounds(self) -> None:
+        """Mantiene las cotas de Inicio/Término coherentes en la GUI."""
+        min_start = qdate_from_date(MIN_GRAPH_START_DATE)
+        max_date = qdate_from_date(date(MAX_YEAR, 12, 31))
+
+        start_qdate = self._date_graph_start.date()
+        end_qdate = self._date_graph_end.date()
+
+        min_end = start_qdate.addDays(MIN_GRAPH_RANGE_DAYS)
+        if min_end > max_date:
+            min_end = max_date
+
+        self._date_graph_end.blockSignals(True)
+        try:
+            self._date_graph_end.setMinimumDate(min_end)
+            self._date_graph_end.setMaximumDate(max_date)
+            if self._date_graph_end.date() < min_end:
+                self._date_graph_end.setDate(min_end)
+        finally:
+            self._date_graph_end.blockSignals(False)
+
+        end_qdate = self._date_graph_end.date()
+        max_start = end_qdate.addDays(-MIN_GRAPH_RANGE_DAYS)
+        if max_start < min_start:
+            max_start = min_start
+
+        self._date_graph_start.blockSignals(True)
+        try:
+            self._date_graph_start.setMinimumDate(min_start)
+            self._date_graph_start.setMaximumDate(max_start)
+            if self._date_graph_start.date() < min_start:
+                self._date_graph_start.setDate(min_start)
+            if self._date_graph_start.date() > max_start:
+                self._date_graph_start.setDate(max_start)
+        finally:
+            self._date_graph_start.blockSignals(False)
+
+    def _on_graph_date_range_changed(self) -> None:
+        """Reacciona a cambios en Inicio/Término y conserva al menos un día."""
+        self._sync_graph_date_edit_bounds()
+
+    def _parse_graph_date_range(self) -> tuple[date, date] | None:
+        """Valida y devuelve el rango visible del gráfico como fechas civiles."""
+        s = self.style
+        self._sync_graph_date_edit_bounds()
+        try:
+            start_date = date_from_qdate(self._date_graph_start.date())
+        except (ValueError, TypeError, OverflowError):
+            self._lbl_error.setText(s.error_invalid_graph_start)
+            return None
+        try:
+            end_date = date_from_qdate(self._date_graph_end.date())
+        except (ValueError, TypeError, OverflowError):
+            self._lbl_error.setText(s.error_invalid_graph_end)
+            return None
+        if start_date < MIN_GRAPH_START_DATE:
+            self._lbl_error.setText(s.error_graph_start_before_min)
+            return None
+        if (end_date - start_date).days < MIN_GRAPH_RANGE_DAYS:
+            self._lbl_error.setText(s.error_graph_range_too_short)
+            return None
+        return start_date, end_date
+
+    def _graph_date_range_as_day_values(self) -> tuple[float, float] | None:
+        """Convierte Inicio/Término del gráfico a días relativos al día 0."""
+        parsed = self._parse_graph_date_range()
+        if parsed is None:
+            return None
+        start_date, end_date = parsed
+        x_min = float((start_date - self.config.start_date).days)
+        x_max = float((end_date - self.config.start_date).days)
+        return x_min, x_max
 
     # ----- relleno automático de campos -------------------------------------
 
@@ -2528,14 +2774,23 @@ class MassInputApp(QWidget):
         self._on_preview_toggle_changed()
 
     def _build_effective_plot_config(self, *, preview: bool) -> PlotConfig:
-        """Devuelve la config con suavidad actual y tamaño apropiado.
+        """Devuelve la config con rango visible, suavidad y tamaño apropiados.
 
         En vista previa se usan márgenes internos más conservadores que en el
         PNG final.  Así las etiquetas rotadas del eje X, el borde derecho del
         eje y el título quedan dentro del pixmap aun cuando la ventana deba
         reducir el gráfico para caber en pantalla.
         """
-        effective = replace(self.config, smooth_general_smoothness=self._current_preview_smoothness())
+        graph_days = self._graph_date_range_as_day_values()
+        if graph_days is None:
+            raise ValueError('Rango de fechas del gráfico inválido.')
+        graph_x_min, graph_x_max = graph_days
+        effective = replace(
+            self.config,
+            smooth_general_smoothness=self._current_preview_smoothness(),
+            x_min=graph_x_min,
+            x_max=graph_x_max,
+        )
         if not preview:
             return effective
         preview_width = self._preview_content_width_that_fits_screen(
