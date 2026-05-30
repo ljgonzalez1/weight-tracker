@@ -318,6 +318,10 @@ class GuiStyle:
     pad_main_y: int = 12
     pad_button: int = 12
 
+    # ── Separadores sutiles entre bloques de entrada ──
+    separator_width: int = 28
+    separator_v_margin: int = 2
+
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
 # │  1-E  Apariencia del gráfico (matplotlib)                                 │
@@ -1970,6 +1974,36 @@ class MassInputApp(QWidget):
 
     # ----- página 1: entrada de datos ---------------------------------------
 
+    def _add_vertical_separator_to_grid(
+        self,
+        grid: QGridLayout,
+        row: int,
+        col: int,
+        parent: QWidget,
+        row_span: int = 1,
+    ) -> None:
+        """Añade una línea vertical fina con aire lateral entre grupos."""
+        s = self.style
+
+        separator_box = QWidget(parent)
+        separator_box.setFixedWidth(int(s.separator_width))
+        separator_layout = QHBoxLayout(separator_box)
+        separator_layout.setContentsMargins(
+            max(4, int(s.separator_width) // 3),
+            int(s.separator_v_margin),
+            max(4, int(s.separator_width) // 3),
+            int(s.separator_v_margin),
+        )
+        separator_layout.setSpacing(0)
+
+        separator = QFrame(separator_box)
+        separator.setFrameShape(QFrame.Shape.VLine)
+        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setLineWidth(1)
+        separator_layout.addWidget(separator, 0, Qt.AlignmentFlag.AlignCenter)
+
+        grid.addWidget(separator_box, row, col, row_span, 1)
+
     def _add_date_fields_to_grid(
         self,
         *,
@@ -2063,6 +2097,14 @@ class MassInputApp(QWidget):
         lbl_graph_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
         range_grid.addWidget(lbl_graph_end, 0, 7, 1, 6)
 
+        self._add_vertical_separator_to_grid(
+            grid=range_grid,
+            row=0,
+            col=6,
+            parent=parent,
+            row_span=2,
+        )
+
         self._add_date_fields_to_grid(
             grid=range_grid,
             row=1,
@@ -2111,7 +2153,7 @@ class MassInputApp(QWidget):
         lbl_mass = QLabel(s.label_mass, parent); lbl_mass.setFont(self._font_label); lbl_mass.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         grid.addWidget(lbl_time, 0, 0, 1, 3)
         grid.addWidget(lbl_date, 0, 3, 1, 5)
-        grid.addWidget(lbl_mass, 0, 8, 1, 2)
+        grid.addWidget(lbl_mass, 0, 10, 1, 2)
 
         # Fila 1 — campos editables
         # Hora
@@ -2179,17 +2221,25 @@ class MassInputApp(QWidget):
         self._entry_year.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_year))
         grid.addWidget(self._entry_year, 1, 8)
 
+        self._add_vertical_separator_to_grid(
+            grid=grid,
+            row=0,
+            col=9,
+            parent=parent,
+            row_span=2,
+        )
+
         # Masa
         self._entry_mass = QLineEdit(parent)
         self._entry_mass.setFont(self._font_entry_lg)
         self._entry_mass.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._entry_mass.setValidator(_MassFieldValidator(self._entry_mass))
         self._entry_mass.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_mass))
-        grid.addWidget(self._entry_mass, 1, 9)
+        grid.addWidget(self._entry_mass, 1, 10)
 
         lbl_kg = QLabel(s.label_kg, parent)
         lbl_kg.setFont(self._font_entry)
-        grid.addWidget(lbl_kg, 1, 10)
+        grid.addWidget(lbl_kg, 1, 11)
 
         # Fila 2 — etiqueta de error reactiva
         self._lbl_error = QLabel('', parent)
