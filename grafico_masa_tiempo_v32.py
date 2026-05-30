@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-grafico_masa_tiempo_v28.py
+grafico_masa_tiempo_v31.py
 ════════════════════════════════════
 Registra masa corporal mediante una ventana gráfica (PyQt6), la almacena
 en un archivo CSV con formato ``día;masa;fecha`` y genera un gráfico PNG
@@ -111,6 +111,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QSlider,
+    QSizePolicy,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -303,13 +304,17 @@ class GuiStyle:
     # ── Dimensiones de widgets ──
     entry_width_time:  int = 3    # Ancho del campo hora / minuto (en "chars")
     entry_width_day:   int = 3    # Ancho del campo día
-    entry_width_year:  int = 5    # Ancho del campo año
+    entry_width_year:  int = 4    # Ancho del campo año
     entry_width_mass:  int = 10   # Ancho del campo masa
-    date_edit_width:   int = 27   # Ancho aproximado de fechas del gráfico
     combo_width_month: int = 12   # Ancho del combobox de mes
     button_width_sm:   int = 14   # Ancho de botones pequeños
     button_width_lg:   int = 16   # Ancho del botón grande
     traceback_height:  int = 12   # Líneas visibles del stack trace
+
+    # ── Anchos proporcionales de los selectores de fecha ──
+    input_reference_width_px: int = 920
+    date_selector_width_ratio: float = 0.36
+    date_selector_spacing: int = 5
 
     # ── Padding general (px) ──
     pad_x: int = 8
@@ -319,8 +324,13 @@ class GuiStyle:
     pad_button: int = 12
 
     # ── Separadores sutiles entre bloques de entrada ──
-    separator_width: int = 28
-    separator_v_margin: int = 2
+    separator_min_width: int = 64
+    separator_stretch: int = 1
+    separator_v_margin: int = 4
+    separator_color: str = "#b8b8b8"
+    data_intergroup_min_spacing: int = 34
+    range_data_vspacing_before_separator: int = 10
+    range_data_vspacing_after_separator: int = 8
 
 
 # ┌────────────────────────────────────────────────────────────────────────────┐
@@ -1846,12 +1856,6 @@ class MassInputApp(QWidget):
         self._fill_with_current_datetime()
         self._fill_default_graph_date_range_from_csv()
 
-        # Conectar los cambios reactivos del día/mes/año para refrescar el
-        # texto del día de la semana (equivalente a trace_add('write', ...)).
-        self._entry_day.textChanged.connect(self._refresh_weekday)
-        self._combo_month.currentIndexChanged.connect(self._on_month_or_year_changed)
-        self._entry_year.textChanged.connect(self._on_month_or_year_changed)
-
         self._refresh_weekday()
         self._update_preview_smoothness_label()
         self._show_input_page()
@@ -1888,6 +1892,43 @@ class MassInputApp(QWidget):
         """
         fm = QFontMetrics(font)
         return int(fm.horizontalAdvance('0') * n_chars + padding)
+
+    def _label_of_width(self) -> int:
+        """Ancho fijo usado por las etiquetas cortas ``de`` de una fecha."""
+        return self._char_width(self._font_entry, max(2, len(self.style.label_of)), padding=4)
+
+    def _date_weekday_width(self) -> int:
+        """Ancho fijo para día de semana, usando el más largo en español."""
+        fm = QFontMetrics(self._font_weekday)
+        longest = max(fm.horizontalAdvance(name) for name in WEEKDAYS_ES)
+        return int(longest + 4)
+
+    def _date_month_width(self) -> int:
+        """Ancho fijo para el selector de mes."""
+        fm = QFontMetrics(self._font_entry)
+        longest = max(fm.horizontalAdvance(name) for name in MONTHS_ES)
+        return int(longest + 34)
+
+    def _natural_date_selector_width(self) -> int:
+        """Suma del ancho mínimo real de una fecha manual completa."""
+        s = self.style
+        return int(
+            self._date_weekday_width()
+            + self._char_width(self._font_entry_lg, s.entry_width_day)
+            + self._label_of_width()
+            + self._date_month_width()
+            + self._label_of_width()
+            + self._char_width(self._font_entry_lg, s.entry_width_year)
+            + 5 * int(s.date_selector_spacing)
+        )
+
+    def _standard_date_selector_width(self) -> int:
+        """Ancho único para Inicio, Término y Fecha del dato."""
+        target = int(
+            float(self.style.input_reference_width_px)
+            * float(self.style.date_selector_width_ratio)
+        )
+        return max(self._natural_date_selector_width(), target)
 
     def _preview_content_width_that_fits_screen(self, requested_width: int) -> int:
         """Limita el ancho de la vista previa para que la ventana quepa completa.
@@ -1982,27 +2023,38 @@ class MassInputApp(QWidget):
         parent: QWidget,
         row_span: int = 1,
     ) -> None:
-        """Añade una línea vertical fina con aire lateral entre grupos."""
+        """Añade una línea vertical fina dentro de un espaciador variable."""
         s = self.style
 
         separator_box = QWidget(parent)
-        separator_box.setFixedWidth(int(s.separator_width))
+        separator_box.setMinimumWidth(int(s.separator_min_width))
+        separator_box.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Preferred,
+        )
+
         separator_layout = QHBoxLayout(separator_box)
         separator_layout.setContentsMargins(
-            max(4, int(s.separator_width) // 3),
+            0,
             int(s.separator_v_margin),
-            max(4, int(s.separator_width) // 3),
+            0,
             int(s.separator_v_margin),
         )
         separator_layout.setSpacing(0)
+        separator_layout.addStretch(1)
 
         separator = QFrame(separator_box)
         separator.setFrameShape(QFrame.Shape.VLine)
-        separator.setFrameShadow(QFrame.Shadow.Sunken)
+        separator.setFrameShadow(QFrame.Shadow.Plain)
         separator.setLineWidth(1)
+        separator.setFixedWidth(1)
+        separator.setStyleSheet(f'color: {s.separator_color}; background-color: {s.separator_color};')
         separator_layout.addWidget(separator, 0, Qt.AlignmentFlag.AlignCenter)
+        separator_layout.addStretch(1)
 
         grid.addWidget(separator_box, row, col, row_span, 1)
+        grid.setColumnMinimumWidth(col, int(s.separator_min_width))
+        grid.setColumnStretch(col, int(s.separator_stretch))
 
     def _add_date_fields_to_grid(
         self,
@@ -2018,45 +2070,56 @@ class MassInputApp(QWidget):
         on_text_changed,
         on_month_or_year_changed,
     ) -> None:
-        """Añade una fecha con el mismo formato visual del dato principal."""
+        """Añade una fecha manual con ancho estandarizado para los tres selectores."""
         s = self.style
 
-        lbl_weekday = QLabel('', parent)
-        lbl_weekday.setFont(self._font_weekday)
-        lbl_weekday.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(lbl_weekday, row, col)
+        date_box = QWidget(parent)
+        date_box.setFixedWidth(self._standard_date_selector_width())
+        date_layout = QHBoxLayout(date_box)
+        date_layout.setContentsMargins(0, 0, 0, 0)
+        date_layout.setSpacing(int(s.date_selector_spacing))
 
-        entry_day = QLineEdit(parent)
+        lbl_weekday = QLabel('', date_box)
+        lbl_weekday.setFont(self._font_weekday)
+        lbl_weekday.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        lbl_weekday.setFixedWidth(self._date_weekday_width())
+        date_layout.addWidget(lbl_weekday)
+
+        entry_day = QLineEdit(date_box)
         entry_day.setFont(self._font_entry_lg)
         entry_day.setAlignment(Qt.AlignmentFlag.AlignCenter)
         entry_day.setMaxLength(2)
         entry_day.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_day))
-        grid.addWidget(entry_day, row, col + 1)
+        date_layout.addWidget(entry_day)
 
-        lbl_of_1 = QLabel(s.label_of, parent)
+        lbl_of_1 = QLabel(s.label_of, date_box)
         lbl_of_1.setFont(self._font_entry)
         lbl_of_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(lbl_of_1, row, col + 2)
+        lbl_of_1.setFixedWidth(self._label_of_width())
+        date_layout.addWidget(lbl_of_1)
 
-        combo_month = QComboBox(parent)
+        combo_month = QComboBox(date_box)
         combo_month.setFont(self._font_entry)
         combo_month.addItems(MONTHS_ES)
         combo_month.setEditable(False)
-        combo_month.setMinimumWidth(self._char_width(self._font_entry, s.combo_width_month))
-        grid.addWidget(combo_month, row, col + 3)
+        combo_month.setFixedWidth(self._date_month_width())
+        date_layout.addWidget(combo_month)
 
-        lbl_of_2 = QLabel(s.label_of, parent)
+        lbl_of_2 = QLabel(s.label_of, date_box)
         lbl_of_2.setFont(self._font_entry)
         lbl_of_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(lbl_of_2, row, col + 4)
+        lbl_of_2.setFixedWidth(self._label_of_width())
+        date_layout.addWidget(lbl_of_2)
 
-        entry_year = QLineEdit(parent)
+        entry_year = QLineEdit(date_box)
         entry_year.setFont(self._font_entry_lg)
         entry_year.setAlignment(Qt.AlignmentFlag.AlignCenter)
         entry_year.setMaxLength(4)
         entry_year.setValidator(_IntFieldValidator(None, 4, entry_year))
         entry_year.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_year))
-        grid.addWidget(entry_year, row, col + 5)
+        date_layout.addWidget(entry_year)
+
+        grid.addWidget(date_box, row, col, alignment=Qt.AlignmentFlag.AlignCenter)
 
         setattr(self, weekday_attr, lbl_weekday)
         setattr(self, day_attr, entry_day)
@@ -2069,12 +2132,7 @@ class MassInputApp(QWidget):
         entry_year.textChanged.connect(on_month_or_year_changed)
 
     def _build_input_page(self, parent: QWidget) -> None:
-        """Construye la página 1 (entrada manual de hora/fecha/masa).
-
-        Se usa un QGridLayout para replicar el layout en columnas del
-        original Tkinter.  El orden de columnas es, de izquierda a derecha:
-            Hora : Minuto |  Día  de  Mes  de  Año  |  Masa  kg
-        """
+        """Construye la página 1 (rango del gráfico y dato de masa)."""
         s = self.style
 
         outer = QVBoxLayout(parent)
@@ -2085,22 +2143,25 @@ class MassInputApp(QWidget):
         range_grid = QGridLayout()
         range_grid.setHorizontalSpacing(s.pad_x)
         range_grid.setVerticalSpacing(s.pad_y)
+        range_grid.setColumnStretch(0, 0)
+        range_grid.setColumnStretch(1, int(s.separator_stretch))
+        range_grid.setColumnStretch(2, 0)
         outer.addLayout(range_grid)
 
         lbl_graph_start = QLabel(s.label_graph_start, parent)
         lbl_graph_start.setFont(self._font_section_title)
         lbl_graph_start.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        range_grid.addWidget(lbl_graph_start, 0, 0, 1, 6)
+        range_grid.addWidget(lbl_graph_start, 0, 0)
 
         lbl_graph_end = QLabel(s.label_graph_end, parent)
         lbl_graph_end.setFont(self._font_section_title)
         lbl_graph_end.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        range_grid.addWidget(lbl_graph_end, 0, 7, 1, 6)
+        range_grid.addWidget(lbl_graph_end, 0, 2)
 
         self._add_vertical_separator_to_grid(
             grid=range_grid,
             row=0,
-            col=6,
+            col=1,
             parent=parent,
             row_span=2,
         )
@@ -2120,7 +2181,7 @@ class MassInputApp(QWidget):
         self._add_date_fields_to_grid(
             grid=range_grid,
             row=1,
-            col=7,
+            col=2,
             parent=parent,
             weekday_attr='_lbl_graph_end_weekday',
             day_attr='_entry_graph_end_day',
@@ -2131,132 +2192,132 @@ class MassInputApp(QWidget):
         )
 
         # Separador visual entre el rango del gráfico y el dato a registrar.
+        outer.addSpacing(int(s.range_data_vspacing_before_separator))
         sep_range_data = QFrame(parent)
         sep_range_data.setFrameShape(QFrame.Shape.HLine)
         sep_range_data.setFrameShadow(QFrame.Shadow.Sunken)
         outer.addWidget(sep_range_data)
+        outer.addSpacing(int(s.range_data_vspacing_after_separator))
 
         lbl_data_section = QLabel(s.label_data, parent)
         lbl_data_section.setFont(self._font_section_title)
         lbl_data_section.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(lbl_data_section)
 
-        # ── Grid principal de campos ──
-        grid = QGridLayout()
-        grid.setHorizontalSpacing(s.pad_x)
-        grid.setVerticalSpacing(s.pad_y)
-        outer.addLayout(grid)
+        # ── Dato a registrar ──
+        data_grid = QGridLayout()
+        data_grid.setHorizontalSpacing(s.pad_x)
+        data_grid.setVerticalSpacing(s.pad_y)
+        data_grid.setColumnStretch(0, 0)  # hora
+        data_grid.setColumnMinimumWidth(1, int(s.data_intergroup_min_spacing))
+        data_grid.setColumnStretch(1, int(s.separator_stretch))  # separador variable hora/fecha
+        data_grid.setColumnStretch(2, 0)  # fecha
+        data_grid.setColumnStretch(3, int(s.separator_stretch))  # separador variable fecha/masa
+        data_grid.setColumnStretch(4, 0)  # masa
+        outer.addLayout(data_grid)
 
-        # Fila 0 — títulos de sección
-        lbl_time = QLabel(s.label_time, parent); lbl_time.setFont(self._font_label)
-        lbl_date = QLabel(s.label_date, parent); lbl_date.setFont(self._font_label); lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        lbl_mass = QLabel(s.label_mass, parent); lbl_mass.setFont(self._font_label); lbl_mass.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(lbl_time, 0, 0, 1, 3)
-        grid.addWidget(lbl_date, 0, 3, 1, 5)
-        grid.addWidget(lbl_mass, 0, 10, 1, 2)
+        lbl_time = QLabel(s.label_time, parent)
+        lbl_time.setFont(self._font_label)
+        lbl_time.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        data_grid.addWidget(lbl_time, 0, 0)
 
-        # Fila 1 — campos editables
-        # Hora
-        self._entry_hour = QLineEdit(parent)
+        lbl_date = QLabel(s.label_date, parent)
+        lbl_date.setFont(self._font_label)
+        lbl_date.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        data_grid.addWidget(lbl_date, 0, 2)
+
+        lbl_mass = QLabel(s.label_mass, parent)
+        lbl_mass.setFont(self._font_label)
+        lbl_mass.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        data_grid.addWidget(lbl_mass, 0, 4)
+
+        time_box = QWidget(parent)
+        time_layout = QHBoxLayout(time_box)
+        time_layout.setContentsMargins(0, 0, 0, 0)
+        time_layout.setSpacing(s.pad_x)
+
+        self._entry_hour = QLineEdit(time_box)
         self._entry_hour.setFont(self._font_entry_lg)
         self._entry_hour.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._entry_hour.setMaxLength(2)
         self._entry_hour.setValidator(_IntFieldValidator(MAX_HOUR, 2, self._entry_hour))
         self._entry_hour.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_time))
-        grid.addWidget(self._entry_hour, 1, 0)
+        time_layout.addWidget(self._entry_hour)
 
-        lbl_colon = QLabel(s.label_colon, parent)
+        lbl_colon = QLabel(s.label_colon, time_box)
         lbl_colon.setFont(self._font_entry_lg)
         lbl_colon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(lbl_colon, 1, 1)
+        time_layout.addWidget(lbl_colon)
 
-        # Minuto
-        self._entry_minute = QLineEdit(parent)
+        self._entry_minute = QLineEdit(time_box)
         self._entry_minute.setFont(self._font_entry_lg)
         self._entry_minute.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self._entry_minute.setMaxLength(2)
         self._entry_minute.setValidator(_IntFieldValidator(MAX_MINUTE, 2, self._entry_minute))
         self._entry_minute.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_time))
-        grid.addWidget(self._entry_minute, 1, 2)
-
-        # Día de la semana (texto derivado — sólo lectura)
-        self._lbl_weekday = QLabel('', parent)
-        self._lbl_weekday.setFont(self._font_weekday)
-        self._lbl_weekday.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        grid.addWidget(self._lbl_weekday, 1, 3)
-
-        # Día del mes
-        self._entry_day = QLineEdit(parent)
-        self._entry_day.setFont(self._font_entry_lg)
-        self._entry_day.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._entry_day.setMaxLength(2)
-        self._entry_day.setValidator(_DayFieldValidator(self._current_max_day, self._entry_day))
-        self._entry_day.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_day))
-        grid.addWidget(self._entry_day, 1, 4)
-
-        lbl_of_1 = QLabel(s.label_of, parent)
-        lbl_of_1.setFont(self._font_entry)
-        lbl_of_1.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(lbl_of_1, 1, 5)
-
-        # Mes
-        self._combo_month = QComboBox(parent)
-        self._combo_month.setFont(self._font_entry)
-        self._combo_month.addItems(MONTHS_ES)
-        self._combo_month.setEditable(False)
-        self._combo_month.setMinimumWidth(self._char_width(self._font_entry, s.combo_width_month))
-        grid.addWidget(self._combo_month, 1, 6)
-
-        lbl_of_2 = QLabel(s.label_of, parent)
-        lbl_of_2.setFont(self._font_entry)
-        lbl_of_2.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        grid.addWidget(lbl_of_2, 1, 7)
-
-        # Año
-        self._entry_year = QLineEdit(parent)
-        self._entry_year.setFont(self._font_entry_lg)
-        self._entry_year.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._entry_year.setMaxLength(4)
-        self._entry_year.setValidator(_IntFieldValidator(None, 4, self._entry_year))
-        self._entry_year.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_year))
-        grid.addWidget(self._entry_year, 1, 8)
+        time_layout.addWidget(self._entry_minute)
+        data_grid.addWidget(time_box, 1, 0, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self._add_vertical_separator_to_grid(
-            grid=grid,
+            grid=data_grid,
             row=0,
-            col=9,
+            col=1,
             parent=parent,
             row_span=2,
         )
 
-        # Masa
-        self._entry_mass = QLineEdit(parent)
+        self._add_date_fields_to_grid(
+            grid=data_grid,
+            row=1,
+            col=2,
+            parent=parent,
+            weekday_attr='_lbl_weekday',
+            day_attr='_entry_day',
+            month_attr='_combo_month',
+            year_attr='_entry_year',
+            on_text_changed=self._refresh_weekday,
+            on_month_or_year_changed=self._on_month_or_year_changed,
+        )
+
+        self._add_vertical_separator_to_grid(
+            grid=data_grid,
+            row=0,
+            col=3,
+            parent=parent,
+            row_span=2,
+        )
+
+        mass_box = QWidget(parent)
+        mass_layout = QHBoxLayout(mass_box)
+        mass_layout.setContentsMargins(0, 0, 0, 0)
+        mass_layout.setSpacing(s.pad_x)
+
+        self._entry_mass = QLineEdit(mass_box)
         self._entry_mass.setFont(self._font_entry_lg)
         self._entry_mass.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self._entry_mass.setValidator(_MassFieldValidator(self._entry_mass))
         self._entry_mass.setFixedWidth(self._char_width(self._font_entry_lg, s.entry_width_mass))
-        grid.addWidget(self._entry_mass, 1, 10)
+        mass_layout.addWidget(self._entry_mass)
 
-        lbl_kg = QLabel(s.label_kg, parent)
+        lbl_kg = QLabel(s.label_kg, mass_box)
         lbl_kg.setFont(self._font_entry)
-        grid.addWidget(lbl_kg, 1, 11)
+        mass_layout.addWidget(lbl_kg)
+        data_grid.addWidget(mass_box, 1, 4, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        # Fila 2 — etiqueta de error reactiva
+        # Fila de error reactiva
         self._lbl_error = QLabel('', parent)
         self._lbl_error.setFont(self._font_error)
-        # El color rojo del mensaje de error se aplica a la etiqueta sin
-        # definir un stylesheet global del programa.
         self._lbl_error.setStyleSheet(f'color: {s.color_error_text};')
         self._lbl_error.setAlignment(Qt.AlignmentFlag.AlignCenter)
         outer.addWidget(self._lbl_error)
 
-        # Fila 3 — separador horizontal fino
+        # Separador horizontal sobre los botones
         sep = QFrame(parent)
         sep.setFrameShape(QFrame.Shape.HLine)
         sep.setFrameShadow(QFrame.Shadow.Sunken)
         outer.addWidget(sep)
 
-        # Fila 4 — botones
+        # Botones
         btn_row = QHBoxLayout()
         btn_row.setSpacing(s.pad_button)
         outer.addLayout(btn_row)
