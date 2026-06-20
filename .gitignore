@@ -70,3 +70,4 @@ Testing/
 venv
 *.build
 *.dist
+grafico_masa_tiempo
