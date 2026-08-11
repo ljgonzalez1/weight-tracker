@@ -1,0 +1,7 @@
+build/
+build-static/
+dist/
+target/
+*.o
+*.a
+.DS_Store

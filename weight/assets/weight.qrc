@@ -1,0 +1,10 @@
+<!DOCTYPE RCC>
+<RCC version="1.0">
+    <qresource prefix="/">
+        <file>icons/program-icon-512.png</file>
+        <file>fonts/OpenRunde-Regular.otf</file>
+        <file>fonts/OpenRunde-Medium.otf</file>
+        <file>fonts/OpenRunde-Semibold.otf</file>
+        <file>fonts/OpenRunde-Bold.otf</file>
+    </qresource>
+</RCC>

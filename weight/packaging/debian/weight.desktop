@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Weight
+GenericName=Body-mass logger
+Comment=Record body mass and plot nonparametric trend curves
+Exec=weight
+Icon=weight
+Terminal=false
+Categories=Utility;Science;MedicalSoftware;
+Keywords=weight;mass;health;chart;plot;trend;
+StartupNotify=true
