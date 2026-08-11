@@ -1,0 +1,4 @@
+// Windows resource script: gives weight.exe its icon in Explorer, the task bar
+// and the Alt-Tab switcher. Qt's setWindowIcon covers the window itself; this
+// covers the file, which the shell reads before the program ever runs.
+IDI_ICON1 ICON "../../assets/icons/program-icon.ico"

@@ -1,0 +1,40 @@
+# Removes exactly the files recorded in install_manifest.txt.
+# User data (CSV history, generated images, settings) lives outside the install
+# prefix and is never touched here.
+set(MANIFEST "@CMAKE_CURRENT_BINARY_DIR@/install_manifest.txt")
+
+if(NOT EXISTS "${MANIFEST}")
+    message(FATAL_ERROR
+        "No install manifest found at ${MANIFEST}.\n"
+        "Nothing has been installed from this build directory, so there is "
+        "nothing to uninstall.")
+endif()
+
+file(STRINGS "${MANIFEST}" INSTALLED_FILES)
+set(DIRECTORIES "")
+
+foreach(file IN LISTS INSTALLED_FILES)
+    set(destination "$ENV{DESTDIR}${file}")
+    if(IS_SYMLINK "${destination}" OR EXISTS "${destination}")
+        message(STATUS "Removing ${destination}")
+        file(REMOVE "${destination}")
+        if(EXISTS "${destination}")
+            message(WARNING "Could not remove ${destination}")
+        endif()
+        get_filename_component(parent "${destination}" DIRECTORY)
+        list(APPEND DIRECTORIES "${parent}")
+    else()
+        message(STATUS "Already absent: ${destination}")
+    endif()
+endforeach()
+
+# Prune directories the project created, but only when they became empty.
+list(REMOVE_DUPLICATES DIRECTORIES)
+list(SORT DIRECTORIES ORDER DESCENDING)
+foreach(directory IN LISTS DIRECTORIES)
+    file(GLOB remaining "${directory}/*")
+    if(remaining STREQUAL "")
+        message(STATUS "Removing empty directory ${directory}")
+        file(REMOVE_RECURSE "${directory}")
+    endif()
+endforeach()

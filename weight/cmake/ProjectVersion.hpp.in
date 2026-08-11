@@ -1,0 +1,20 @@
+#pragma once
+
+/// Generated from cmake/ProjectVersion.hpp.in. Do not edit by hand.
+/// The values originate from the VERSION file at the repository root, which is
+/// the single source of truth for the project version.
+
+namespace weight::core::version {
+
+inline constexpr const char* kProjectName        = "@PROJECT_NAME@";
+inline constexpr const char* kDisplayName        = "@WEIGHT_DISPLAY_NAME@";
+inline constexpr const char* kExecutableName     = "@WEIGHT_EXECUTABLE_NAME@";
+inline constexpr const char* kOrganisationDomain = "@WEIGHT_ORGANISATION_DOMAIN@";
+inline constexpr const char* kVersionString      = "@PROJECT_VERSION@";
+inline constexpr const char* kDescription        = "@PROJECT_DESCRIPTION@";
+
+inline constexpr int kVersionMajor = @PROJECT_VERSION_MAJOR@;
+inline constexpr int kVersionMinor = @PROJECT_VERSION_MINOR@;
+inline constexpr int kVersionPatch = @PROJECT_VERSION_PATCH@;
+
+}  // namespace weight::core::version
