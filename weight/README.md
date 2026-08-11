@@ -17,6 +17,13 @@ fourth curve is a three-step change — see [docs/curves.md](docs/curves.md).
 
 ---
 
+## NOTE:
+### Windows: still untested
+### make deb: working on it still
+### Mac OS: still untested
+### Linux works!!
+
+---
 ## Building
 
 ```sh
