@@ -13,20 +13,64 @@ window stays responsive while the smoothness slider moves.
 | **C** | blue | local linear LOESS |
 
 Each can also be shown as its rate of change in kilograms per week. Adding a
-fourth curve is a three-step change — see [docs/curves.md](docs/curves.md).
+fourth curve is a four-step change, and
+[docs/curves.md](docs/curves.md) walks through one from an empty file to a
+line on the chart.
 
 ---
 
-## NOTE:
-### Windows: still untested
-### make deb: working on it still
-### Mac OS: still untested
-### Linux works!!
+## Repository layout
 
----
-## Building
+The project lives in `weight/`, one level below the repository root, so that
+the root can hold packaging metadata and CI without cluttering the source tree.
+The root files are **symlinks into it**, so GitHub renders the README on the
+landing page and detects the licence, while there is still only one copy of
+each:
 
 ```sh
+cd /path/to/the/repository/root
+ln -s ./weight/README.md README.md
+ln -s ./weight/LICENSE   LICENSE
+git add README.md LICENSE
+```
+
+Note the spelling: the file in `weight/` is `LICENSE`, not `LICENCE`. A symlink
+made with the British spelling on either side points at nothing, and GitHub
+silently shows no licence rather than reporting an error.
+
+Verify with `ls -l`, which prints the arrow for a real symlink and nothing for
+a copy:
+
+```
+README.md -> ./weight/README.md
+LICENSE -> ./weight/LICENSE
+```
+
+Windows checkouts need `git config --global core.symlinks true` before cloning,
+or Git writes the symlinks as ordinary text files containing a path.
+
+---
+
+## Status
+
+| | |
+|---|---|
+| **Linux** | works — built, 12/12 suites, 45/45 self-test, `.deb` built and installed |
+| **`make deb`** | works — see [the note on permissions](docs/packaging.md#permissions-and-the-two-ways-they-go-wrong) |
+| **Windows** | builds are untested; no machine available |
+| **macOS** | builds are untested; no machine available |
+
+---
+
+## Building
+
+Full per-platform instructions, including how to install Qt itself, are in
+**[docs/building.md](docs/building.md)**. The short version, once the
+dependencies are in place:
+
+```sh
+git clone https://github.com/ljgonzalez1/weight.git
+cd weight/weight          # the project lives one level down
 mkdir build && cd build
 cmake ..
 
@@ -68,6 +112,11 @@ generator-specific subdirectory to find the binary.
 `sudo`, the leftovers it created are root-owned; the next run detects that and
 prints the exact `rm` command rather than failing with "permission denied".
 
+`make clean` removes `target/` along with the build tree, and the next build
+recreates it immediately before linking. Up to 0.49.0 it did not, which is why
+`make clean` followed by `make` used to fail with `ld: cannot open output file`
+until `cmake ..` was run again.
+
 ### Pre-build checks
 
 `cmake ..` verifies the toolchain before compiling anything, and prints what it
@@ -94,10 +143,14 @@ function and a call.
 ## Dependencies
 
 Listed separately by purpose. **Running** needs far less than **building**, and
-and packaging needs a little more again.
+packaging needs a little more again.
 
-Minimum: **Qt 6.2**, a **C++20** compiler (GCC 11+, Clang 14+, MSVC 2022),
-**CMake 3.21**.
+Minimum: **Qt 6.2**, a **C++20** compiler (GCC 10+, Clang 12+, MSVC 2019
+16.11+), **CMake 3.21**.
+
+> Installing these — including which components to tick in the Qt installer on
+> Windows and macOS — is [docs/building.md](docs/building.md). The lists below
+> are the summary.
 
 ### Runtime — dynamic build
 
@@ -137,10 +190,15 @@ sudo zypper install gcc-c++ cmake qt6-base-devel qt6-widgets-devel
 # Alpine
 sudo apk add build-base cmake qt6-qtbase-dev qt6-qtbase-x11
 
-# macOS
+# macOS — Homebrew Qt is single-architecture, so pass
+#         -DCMAKE_OSX_ARCHITECTURES=arm64 (or x86_64) when configuring
 xcode-select --install && brew install cmake qt@6
 
-# Windows (MSVC 2022 + the official Qt installer, or vcpkg)
+# Windows — Visual Studio 2022 with the "Desktop development with C++"
+#           workload, then the Qt online installer with the
+#           "Qt 6.8.x -> MSVC 2022 64-bit" component. Configure with
+#           -DCMAKE_PREFIX_PATH=C:/Qt/6.8.2/msvc2022_64
+#           Step by step, with links: docs/building.md
 ```
 
 ### Testing
@@ -215,6 +273,12 @@ program.
 
 ## What the chart covers
 
+**"View chart only"** draws the stored history without recording anything. It
+is disabled while the history holds no measurements, because a chart drawn from
+nothing is an empty pair of axes — which reads as a failure rather than as an
+answer. Hovering the disabled button says why. Enter a measurement and press
+Continue, and it becomes available.
+
 The horizontal axis is derived from your data, not fixed:
 
 - **No valid measurements** — the chart starts **today**. There is nothing to
@@ -282,16 +346,57 @@ wrote at install time and deletes exactly what was installed.
 
 ## Language
 
-English by default. Spanish when the system both supports and uses it.
+English by default. Spanish when the system both supports and uses it — **any**
+Spanish, not one particular one.
 
-The chain, highest priority first: `WEIGHT_LANG`, `LC_ALL`, `LC_MESSAGES`,
-`LANG`, then Qt's view of the platform UI language (which is what Windows and
-macOS actually use). A value of `C` or `POSIX` means *no locale configured* and
-selects English. Anything beginning `es` selects Spanish; everything else falls
-back to English.
+| Tag | Language |
+|---|---|
+| `es`, `es_CL`, `es_ES`, `es_MX`, `es_AR`, `es_US`, `es-419`, `es-Latn-MX`, `es_ES@valencia`, `spa` | **Spanish** |
+| `en`, `en_US`, `en_GB`, `en-IN`, `eng` | English |
+| anything else: `de_DE`, `pt_BR`, `ja_JP`, … | English |
+| `C`, `POSIX`, `C.UTF-8`, nothing set | English |
+
+The decision is made on the **primary language subtag**, after the codeset
+(`.UTF-8`), the modifier (`@valencia`), the script and the region have been
+stripped — not on a string prefix. A prefix test says "Spanish" to Estonian
+written `est_EE` and to Esperanto written `eo`; this one does not, and there is
+a test row for each.
+
+### Where the answer comes from
+
+Highest priority first. Each step is asked through the interface that platform
+actually publishes for it:
+
+1. **`WEIGHT_LANG`** — an explicit override, honoured even when it names a
+   language the program does not ship.
+2. **The POSIX environment** — `LC_ALL`, then `LC_MESSAGES`, then `LANG`, with
+   `LANGUAGE` given the priority GNU software gives it. `LC_ALL=C` means
+   untranslated output even when `LANGUAGE` lists Spanish first, which is the
+   documented GNU exception and the contract every script relies on.
+3. **The operating system's own UI-language list** —
+   `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME)` on Windows,
+   `CFLocaleCopyPreferredLanguages()` on macOS,
+   `setlocale(LC_MESSAGES, "")` on POSIX.
+4. **`QLocale::system()`** — Qt's own view, as a last resort.
+
+Step 3 is a *ranked list*, not a single value, because both Windows and macOS
+let you order several languages, and every other application on those machines
+resolves against that order. A machine ranked `de, es, en` therefore gets
+Spanish: German is skipped because there is no German catalogue, and Spanish is
+a better answer for that person than English. Reading the UI-language list
+rather than the formatting locale also matters — someone in Chile who reads
+English formats dates as `es-CL` and displays menus in `en-US`, and this
+program agrees with the menus.
+
+The log says which step answered, so the choice is never a mystery:
+
+```
+Idioma: es_CL.UTF-8 (desde LC_MESSAGES)
+Language: en-GB (from GetUserPreferredUILanguages)
+```
 
 ```sh
-WEIGHT_LANG=es_CL weight     # force Spanish
+WEIGHT_LANG=es_US weight     # force Spanish
 WEIGHT_LANG=C weight         # force English
 ```
 
@@ -356,7 +461,7 @@ Exit statuses: `0` saved, `2` bad usage, `3` unusable workspace, `4` cancelled,
 
 | Platform | Architecture | Status |
 |---|---|---|
-| Ubuntu 24.04, Qt 6.4, GCC 13 | x86_64 | **Tested** — builds, 9/9 suites, 38/38 self-test, .deb built and installed |
+| Ubuntu 24.04, Qt 6.4, GCC 13 | x86_64 | **Tested** — builds, 12/12 suites, 45/45 self-test, `.deb` built and installed |
 | Debian, Ubuntu, Mint, Fedora, Arch, openSUSE, Alpine | x86_64, aarch64 | Expected |
 | macOS 11+ | x86_64, arm64 | **Untested** — no machine available |
 | Windows 10/11 | amd64, arm64 | **Untested** — no machine available |
@@ -369,7 +474,8 @@ Not supported: Qt 5 (Qt 6 APIs throughout), 32-bit targets (untested).
 
 | | |
 |---|---|
-| [docs/curves.md](docs/curves.md) | adding a curve |
+| [docs/building.md](docs/building.md) | installing Qt and building, per platform |
+| [docs/curves.md](docs/curves.md) | adding a curve, start to finish |
 | [docs/architecture.md](docs/architecture.md) | layers, patterns, threading |
 | [docs/mathematics.md](docs/mathematics.md) | the estimators, and one corrected defect |
 | [docs/platform.md](docs/platform.md) | the three operating systems, and which call answers each question |

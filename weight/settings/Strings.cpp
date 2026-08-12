@@ -3,6 +3,9 @@
 #include <QLocale>
 
 #include <cstdlib>
+#include <vector>
+
+#include "platform/SystemLocale.hpp"
 
 namespace weight::settings {
 namespace {
@@ -49,6 +52,12 @@ const QHash<QString, QString>& englishCatalogue() {
         {QStringLiteral("button.reset.datetime"), QStringLiteral("Reset date and time")},
         {QStringLiteral("button.continue"), QStringLiteral("Continue")},
         {QStringLiteral("button.view.chart"), QStringLiteral("View chart only")},
+        {QStringLiteral("button.view.chart.tip"),
+         QStringLiteral("Draw the chart from the measurements already stored. Nothing is "
+                        "recorded.")},
+        {QStringLiteral("button.view.chart.disabled"),
+         QStringLiteral("There is nothing to draw yet: the history holds no measurements. "
+                        "Enter one above and press Continue.")},
         {QStringLiteral("button.back"), QStringLiteral("Back")},
         {QStringLiteral("button.save"), QStringLiteral("Save image")},
 
@@ -90,6 +99,9 @@ const QHash<QString, QString>& englishCatalogue() {
         {QStringLiteral("error.timestamp"), QStringLiteral("That date and time is not valid.")},
         {QStringLiteral("error.no.preview"),
          QStringLiteral("There is no chart to save. Go back and enter a measurement.")},
+        {QStringLiteral("error.no.history"),
+         QStringLiteral("There are no measurements to draw yet. Enter one and press "
+                        "Continue.")},
         {QStringLiteral("error.fatal"),
          QStringLiteral("Something went wrong. The details are below.")},
 
@@ -205,6 +217,12 @@ const QHash<QString, QString>& spanishCatalogue() {
         {QStringLiteral("button.reset.datetime"), QStringLiteral("Restablecer fecha y hora")},
         {QStringLiteral("button.continue"), QStringLiteral("Continuar")},
         {QStringLiteral("button.view.chart"), QStringLiteral("Solo ver el gráfico")},
+        {QStringLiteral("button.view.chart.tip"),
+         QStringLiteral("Dibuja el gráfico con las mediciones ya guardadas. No registra "
+                        "nada.")},
+        {QStringLiteral("button.view.chart.disabled"),
+         QStringLiteral("Todavía no hay nada que dibujar: el historial no tiene mediciones. "
+                        "Ingresa una arriba y pulsa Continuar.")},
         {QStringLiteral("button.back"), QStringLiteral("Volver")},
         {QStringLiteral("button.save"), QStringLiteral("Guardar imagen")},
 
@@ -242,6 +260,9 @@ const QHash<QString, QString>& spanishCatalogue() {
         {QStringLiteral("error.timestamp"), QStringLiteral("Esa fecha y hora no es válida.")},
         {QStringLiteral("error.no.preview"),
          QStringLiteral("No hay gráfico que guardar. Vuelve e introduce una medición.")},
+        {QStringLiteral("error.no.history"),
+         QStringLiteral("Todavía no hay mediciones que dibujar. Ingresa una y pulsa "
+                        "Continuar.")},
         {QStringLiteral("error.fatal"),
          QStringLiteral("Algo ha fallado. Los detalles están abajo.")},
 
@@ -340,51 +361,115 @@ bool Strings::tagIsNeutral(const QString& tag) {
            || normalised.startsWith(QLatin1String("POSIX."));
 }
 
+QString Strings::primaryLanguageSubtag(const QString& tag) {
+    QString working = tag.trimmed();
+    if (working.isEmpty()) {
+        return {};
+    }
+
+    // Everything after a codeset or a modifier belongs to neither the language
+    // nor the region: es_CL.UTF-8@valencia carries both, and neither changes
+    // which language it names.
+    for (const QChar separator : {QLatin1Char('.'), QLatin1Char('@')}) {
+        const qsizetype cut = working.indexOf(separator);
+        if (cut >= 0) {
+            working.truncate(cut);
+        }
+    }
+
+    // POSIX writes es_CL, BCP-47 writes es-CL, and Windows and macOS both
+    // report the second form. Treating the two separators as one means the
+    // rest of the function does not care which convention produced the tag.
+    working.replace(QLatin1Char('_'), QLatin1Char('-'));
+
+    const QStringList subtags = working.split(QLatin1Char('-'), Qt::SkipEmptyParts);
+    return subtags.isEmpty() ? QString() : subtags.first().toLower();
+}
+
 Language Strings::languageForTag(const QString& tag) {
+    // "No locale configured" is an answer, not a missing one, and the answer
+    // is English.
     if (tagIsNeutral(tag)) {
         return Language::English;
     }
-    const QString lowered = tag.trimmed().toLower();
-    if (lowered.startsWith(QLatin1String("es"))) {
+
+    const QString language = primaryLanguageSubtag(tag);
+
+    // ISO 639-1 "es" plus the 639-2/T and 639-3 form "spa", which is what a
+    // few systems and most language-tag databases emit for Spanish. Both are
+    // whole-subtag comparisons, so "est" (Estonian) cannot match either.
+    if (language == QLatin1String("es") || language == QLatin1String("spa")) {
         return Language::Spanish;
     }
-    // Everything else, including en_*, resolves to English.
+
+    // en_* is English, and so is everything the program has no catalogue for.
+    // Naming the English case explicitly rather than letting it fall out of
+    // the default keeps the priority order in the code the same as the one in
+    // the documentation.
+    if (language == QLatin1String("en") || language == QLatin1String("eng")) {
+        return Language::English;
+    }
     return Language::English;
 }
 
+bool Strings::tagIsSupported(const QString& tag) {
+    const QString language = primaryLanguageSubtag(tag);
+    return language == QLatin1String("es") || language == QLatin1String("spa")
+           || language == QLatin1String("en") || language == QLatin1String("eng");
+}
+
 void Strings::detectAndInstall() {
-    struct Candidate {
-        const char* variable;
-        const char* label;
-    };
-    // Order matters and follows POSIX: LC_ALL beats LC_MESSAGES beats LANG.
-    static constexpr Candidate kCandidates[] = {
-        {"WEIGHT_LANG", "WEIGHT_LANG"},
-        {"LC_ALL", "LC_ALL"},
-        {"LC_MESSAGES", "LC_MESSAGES"},
-        {"LANG", "LANG"},
+    const auto adopt = [](const QString& tag, const QString& source) {
+        g_detectedTag = tag;
+        g_detectionSource = source;
+        g_language = languageForTag(tag);
     };
 
-    for (const Candidate& candidate : kCandidates) {
-        const QString value = environmentValue(candidate.variable);
-        if (value.isEmpty()) {
-            continue;
-        }
-        // A neutral value is a real answer, not a missing one: it means the
-        // machine has no locale configured, so English is correct and the
-        // search stops here rather than falling through to Qt.
-        g_detectedTag = value;
-        g_detectionSource = QString::fromLatin1(candidate.label);
-        g_language = languageForTag(value);
+    // 1. The explicit override. It is first because its whole purpose is to
+    //    win, and it is honoured even when it names a language the program
+    //    does not ship — WEIGHT_LANG=de is a request for the fallback, and
+    //    getting English back is the correct answer to it.
+    const QString override = environmentValue("WEIGHT_LANG");
+    if (!override.isEmpty()) {
+        adopt(override, QStringLiteral("WEIGHT_LANG"));
         return;
     }
 
-    // Nothing in the environment. On Windows and macOS the POSIX variables are
-    // usually absent and Qt reads the platform's UI language instead.
-    const QString systemTag = QLocale::system().name();
-    g_detectedTag = systemTag;
-    g_detectionSource = QStringLiteral("QLocale::system");
-    g_language = languageForTag(systemTag);
+    // 2. The POSIX environment, then 3. the platform's own UI-language list.
+    //    Both arrive as ordered candidates, so they are walked with the same
+    //    rule: take the first entry that names a language this program can
+    //    actually speak.
+    std::vector<platform::LocaleCandidate> candidates = platform::environmentLocales();
+    const std::vector<platform::LocaleCandidate> fromSystem = platform::systemLocales();
+    candidates.insert(candidates.end(), fromSystem.begin(), fromSystem.end());
+
+    for (const platform::LocaleCandidate& candidate : candidates) {
+        // A neutral tag is a decision and stops the walk: a machine that says
+        // "C" is saying it has no locale, and looking further would be
+        // overriding an explicit statement with a guess.
+        if (tagIsNeutral(candidate.tag)) {
+            adopt(candidate.tag, candidate.source);
+            return;
+        }
+        // An unsupported language does *not* stop the walk. This is the point
+        // of reading the ranked list: on a machine set to "de, es, en" the
+        // German entry means "German if you have it", and Spanish is a better
+        // answer than English for the person who ranked it second.
+        if (tagIsSupported(candidate.tag)) {
+            adopt(candidate.tag, candidate.source);
+            return;
+        }
+    }
+
+    // Nothing named a language the program ships. Report the most preferred
+    // tag that was seen, so the log says what was actually asked for, and
+    // fall back to English.
+    if (!candidates.empty()) {
+        adopt(candidates.front().tag, candidates.front().source);
+        g_language = Language::English;
+        return;
+    }
+    adopt(QStringLiteral("C"), QStringLiteral("default"));
 }
 
 void Strings::install(Language language) {

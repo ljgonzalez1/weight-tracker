@@ -173,6 +173,12 @@ void InputPage::buildLayout(const FontLibrary& fonts) {
     resetButton_ = addButton(Strings::get(QStringLiteral("button.reset.datetime")), theme.smallButtonCharacters + 2, false);
     continueButton_ = addButton(Strings::get(QStringLiteral("button.continue")), theme.largeButtonCharacters, true);
     viewChartButton_ = addButton(Strings::get(QStringLiteral("button.view.chart")), theme.largeButtonCharacters, false);
+
+    // Disabled until somebody says otherwise. The window asks the repository
+    // how many measurements exist and calls setHistoryAvailable() before the
+    // page is first shown; until that happens, "nothing to show" is both the
+    // safe assumption and the true one on a first run.
+    applyHistoryGate();
 }
 
 void InputPage::connectSignals() {
@@ -337,6 +343,39 @@ QList<QWidget*> InputPage::interactiveWidgets() const {
     return {hourField_, minuteField_, dayField_,       monthBox_,
             yearField_, massField_,   resetButton_,    continueButton_,
             viewChartButton_};
+}
+
+void InputPage::setInputsEnabled(bool enabled) {
+    for (QWidget* widget : interactiveWidgets()) {
+        widget->setEnabled(enabled);
+    }
+    // Re-applied last, so that enabling the page cannot enable a button that
+    // has nothing to show.
+    applyHistoryGate();
+}
+
+void InputPage::setHistoryAvailable(bool available) {
+    historyAvailable_ = available;
+    applyHistoryGate();
+}
+
+bool InputPage::viewChartButtonEnabled() const {
+    return viewChartButton_ != nullptr && viewChartButton_->isEnabled();
+}
+
+void InputPage::applyHistoryGate() {
+    if (viewChartButton_ == nullptr) {
+        return;
+    }
+    // The button may be off for either of two reasons — the page is busy, or
+    // the history is empty — and only the second has an explanation worth
+    // showing. Keeping the tooltip in step with the reason means hovering a
+    // disabled button always answers the question the user is asking.
+    const bool pageIsEnabled = continueButton_ != nullptr && continueButton_->isEnabled();
+    viewChartButton_->setEnabled(pageIsEnabled && historyAvailable_);
+    viewChartButton_->setToolTip(
+        historyAvailable_ ? Strings::get(QStringLiteral("button.view.chart.tip"))
+                          : Strings::get(QStringLiteral("button.view.chart.disabled")));
 }
 
 void InputPage::focusPrimaryField() { massField_->setFocus(Qt::OtherFocusReason); }

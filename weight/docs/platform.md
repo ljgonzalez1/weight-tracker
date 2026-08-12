@@ -4,13 +4,14 @@ Everything in this document is about the three operating systems being genuinely
 different, and about which call was chosen to hide that difference without
 lying about it.
 
-Four things need the platform, and only four. They are the whole of
+Five things need the platform, and only five. They are the whole of
 `src/platform/`, plus one file-writing detail in `src/data/`:
 
 | Question | Answered by |
 |---|---|
 | Where does the person's data live? | `platform/Workspace` |
 | Is another copy already running? | `platform/SingleInstance` |
+| Which language does this machine want? | `platform/SystemLocale` |
 | How do I replace a file without losing it? | `data/AtomicFileWriter` |
 | How many threads may I use? | `core/Concurrency` |
 
@@ -196,7 +197,74 @@ quietly serialising the fits.
 
 ---
 
-## 5. What each platform gets at install time
+## 5. Which language the machine wants
+
+### The calls that are actually used
+
+Unlike the four questions above, this one has no single Qt call that answers it
+correctly on all three systems, so each is asked directly:
+
+| Platform | API | What it returns |
+|---|---|---|
+| Windows | `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)` | the ordered list behind Settings → Time & Language → Language, as BCP-47 names (`es-CL`, `en-GB`) |
+| macOS | `CFLocaleCopyPreferredLanguages()` | the ordered list behind System Settings → General → Language & Region |
+| POSIX | `setlocale(LC_MESSAGES, "")` | the C library's own resolution of `LC_ALL` / `LC_MESSAGES` / `LANG` |
+
+with `QLocale::system().uiLanguages()` appended everywhere as a last resort, so
+a platform none of these branches knows about still gets an answer.
+
+### Why not `QLocale::system()` alone
+
+Because it answers a slightly different question. `QLocale::system()` reports
+the **formatting** locale — how to print a date, a number, a currency — and
+what selects the language of an interface is the **UI language** list. On both
+Windows and macOS the two genuinely differ, and the configuration where they
+differ is not exotic: someone in Chile who reads English has Windows formatting
+dates as `es-CL` and displaying its menus in `en-US`. Reading the UI language
+list is what makes this program agree with every other program on that machine.
+
+### Why a list rather than a value
+
+Both Windows and macOS let the user *rank* languages, and that ranking is the
+whole point of the feature. A machine ordered `de, es, en` is saying "German if
+you have it, otherwise Spanish, otherwise English". Taking only the first entry
+would answer English — the fallback — for a person who explicitly asked for
+Spanish ahead of it. So the list is walked, and the first entry naming a
+language the program actually ships wins.
+
+A neutral tag (`C`, `POSIX`) stops the walk instead of being skipped. It is not
+a language the program lacks; it is the explicit statement that no locale is
+configured, and looking past an explicit statement in order to guess would be
+worse than honouring it.
+
+### The one non-obvious rule
+
+`LANGUAGE` outranks `LC_ALL`, `LC_MESSAGES` and `LANG` — except when the
+resolved locale is `C` or `POSIX`, where it is ignored entirely. That is GNU
+gettext's rule, not an invention here, and it exists so that `LC_ALL=C` remains
+a reliable way to get untranslated output. Every script that parses a program's
+output depends on that, so the exception is implemented rather than tidied
+away.
+
+### Restoring what was borrowed
+
+`setlocale(LC_MESSAGES, "")` changes process state, so the previous value is
+read first and put back before the function returns. Only `LC_MESSAGES` is ever
+touched, never `LC_NUMERIC`: a program that quietly switches its own decimal
+separator is a program that writes `1,5` into a file another tool will read as
+fifteen.
+
+### Where it is tested
+
+`tests/unit/test_localisation.cpp` covers the tag mapping exhaustively —
+fifteen Spanish forms, five English ones, the unsupported languages, and the
+two traps a prefix test falls into (`est_EE`, `eo`) — plus the environment
+chain, including the `LC_ALL=C` exception. `--self-test` re-checks the mapping
+against the binary that was actually shipped.
+
+---
+
+## 6. What each platform gets at install time
 
 | | Linux | macOS | Windows |
 |---|---|---|---|

@@ -72,6 +72,24 @@ core::Result<PendingSession> ApplicationController::buildSessionForViewing() {
     return session;
 }
 
+int ApplicationController::storedMeasurementCount() {
+    core::Result<data::LoadedHistory> loaded = repository_->load();
+    if (!loaded) {
+        // An unreadable history is not the same as an empty one, but for this
+        // question the answer is the same: there is nothing that can be
+        // plotted, so the button stays off. The error itself is reported by
+        // whichever operation actually needs the file.
+        return 0;
+    }
+    int valid = 0;
+    for (const data::CsvRecord& record : loaded.value().records) {
+        if (record.isValid()) {
+            ++valid;
+        }
+    }
+    return valid;
+}
+
 core::Result<PendingSession> ApplicationController::buildSessionWithMeasurement(
     const QDateTime& moment, double mass) {
     core::Result<data::LoadedHistory> loaded = repository_->load();

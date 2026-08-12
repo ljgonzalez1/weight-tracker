@@ -1,5 +1,141 @@
 # Changelog
 
+## 0.50.0
+
+### The build, in two places
+
+**Fixed: `ld: cannot open output file .../target/weight: No such file or directory`.**
+
+Not a linker problem. `target/` did not exist.
+
+`CMakeLists.txt` lists `target/` in `ADDITIONAL_CLEAN_FILES`, so `make clean`
+removes the directory itself. CMake creates the runtime output directory only
+while *generating*, and never again. So the sequence was:
+
+```
+make clean          target/ is deleted
+make                fails at 57%, at the link step
+make clean && make  fails again, identically
+cmake ..            recreates target/ as a side effect of the preflight check
+make                works
+```
+
+which reads as an intermittent linker fault and is a directory that is not
+there. Reproduced exactly before being fixed.
+
+`weight_ensure_output_directory()` now attaches a `PRE_BUILD` command to the
+`weight` target. Every generator except Visual Studio treats `PRE_BUILD` as
+`PRE_LINK`, so the directory is recreated inside the same rule, immediately
+before `ld` runs. If the directory is removed by hand the target's output file
+is missing too, so the target is out of date, so the rule runs: there is no
+ordering in which the linker gets there first. The `deb`, `dmg` and `dist`
+targets create `target/packages/` and the staging directory the same way.
+
+**Fixed: `dpkg-deb: error: control directory has bad permissions 777`.**
+
+`mkdir` applies the caller's `umask`. With `umask 000` — which a good number of
+shell configurations set — `$STAGE/DEBIAN` came out `0777`, and `dpkg-deb`
+requires the control directory to be between `0755` and `0775`. Every form of
+`make deb` failed at the last step, after doing all the work.
+
+`packaging/debian/build-deb.sh` now sets `umask 022` and states the mode of
+everything it writes: directories `0755`, files `0644`, the binary and the
+maintainer scripts `0755`.
+
+Setting the mode is not enough on its own, because on an NTFS or exFAT mount —
+the usual arrangement when the source lives on a partition shared with Windows
+— `chmod` succeeds and changes nothing. So the script verifies: it creates a
+probe directory, sets it to `0755`, reads the mode back, and if the filesystem
+did not store it, stages under `$TMPDIR` instead and prints why. The resulting
+`.deb` is identical either way, because a package records its own modes.
+
+### Language
+
+**Every `es_*` locale selects Spanish, not only `es_CL`.**
+
+The mapping was `tag.toLower().startsWith("es")`, which is wrong in both
+directions: it accepts Estonian written `est_EE` and Esperanto written `eo`,
+and it says nothing about which subtag it is looking at. It now extracts the
+**primary language subtag** — stripping the codeset (`.UTF-8`), the modifier
+(`@valencia`), the script and the region — and compares whole subtags. `es`,
+`es_CL`, `es_ES`, `es_MX`, `es_AR`, `es_US`, `es-419`, `es-Latn-MX`,
+`es_ES.UTF-8@valencia` and `spa` all select Spanish; `est_EE` and `eo` no
+longer do.
+
+**Windows and macOS are asked through their own interfaces.**
+
+New `src/platform/SystemLocale.{hpp,cpp}`:
+
+| Platform | Call |
+|---|---|
+| Windows | `GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, …)`, falling back to `GetUserDefaultLocaleName` |
+| macOS | `CFLocaleCopyPreferredLanguages()`, falling back to `CFLocaleCopyCurrent` |
+| POSIX | `setlocale(LC_MESSAGES, "")`, asked and then restored |
+
+with `QLocale` demoted to a last resort. `QLocale::system()` reports the
+*formatting* locale, and what selects an interface language is the *UI
+language* list; on Windows and macOS these genuinely differ.
+
+Both platforms return a **ranked list**, and the list is now walked rather than
+truncated to its first entry: a machine ordered `de, es, en` gets Spanish,
+because German is skipped for want of a catalogue and Spanish is what that
+person asked for next. A neutral tag (`C`, `POSIX`) stops the walk, since it is
+an explicit statement rather than a missing one.
+
+`LANGUAGE` is honoured with GNU's own precedence rule, including the exception
+that it is ignored when the resolved locale is `C` — which is what keeps
+`LC_ALL=C` a reliable way to get untranslated output.
+
+CMake links `CoreFoundation` on macOS rather than relying on Qt to drag it in.
+
+### Interface
+
+**"View chart only" is disabled while there is nothing to draw.**
+
+The button plots the stored history without recording anything, and with an
+empty history it produced a chart with no data in it — an empty pair of axes,
+which reads as a failure rather than as an answer. `ApplicationController`
+gained `storedMeasurementCount()`, and the window asks on every return to the
+entry page, because the history changes when a measurement is saved and can
+change outside the window entirely: the file is a plain CSV the person is
+invited to edit.
+
+The rule lives in `InputPage::setInputsEnabled()` rather than at the call
+sites. Four places used to re-enable the page by looping over its widgets, and
+every one of them would have switched the button back on. The handler also
+re-checks before acting, because a disabled button is a courtesy and not a
+guarantee.
+
+The tooltip differs by reason: with a history, what the button does; without
+one, why it cannot.
+
+### Tests
+
+- `test_input_page` is new: four cases, including the specific regression of
+  re-enabling the page enabling the button.
+- `test_localisation` grew from twelve tag rows to thirty, plus the environment
+  chain, the `LC_ALL=C` exception and the `WEIGHT_LANG` override.
+- `--self-test` checks nine Spanish forms and ten English-or-fallback forms
+  rather than one of each, and reports where the detected language came from.
+- 12 suites, 45 self-test checks.
+
+### Documentation
+
+- `docs/building.md` is new: from `git clone` to a running binary on each
+  platform, including which components to select in the Qt installer on Windows
+  and macOS, the vcpkg route, and the two build failures above.
+- `docs/curves.md` is rewritten as a complete worked example. A fourth curve
+  was written against it, compiled and run through the suite to check the
+  instructions are sufficient; two things the previous version omitted came out
+  of that — that `TrendParameters` needs an entry, and that `--self-test`
+  requires a curve to reproduce a straight line, which the example initially
+  failed.
+- `docs/packaging.md` opens with the four lines that produce a package, and
+  documents the permission problem above.
+- `docs/platform.md` gains the locale section.
+- The README documents the repository's `README.md` and `LICENSE` symlinks, and
+  the language table.
+
 ## 0.49.0
 
 ### The crash

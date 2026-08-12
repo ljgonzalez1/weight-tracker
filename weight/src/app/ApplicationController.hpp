@@ -57,6 +57,23 @@ public:
         const QDateTime& moment, double mass);
     [[nodiscard]] core::Result<PendingSession> buildSessionForViewing();
 
+    /// How many valid measurements the history currently holds.
+    ///
+    /// Answers the question "is there anything to plot?", which is what
+    /// decides whether "View chart only" is offered at all. Zero on a first
+    /// run, and zero for a file that exists but contains only a header or only
+    /// unreadable lines — a chart drawn from those would be an empty pair of
+    /// axes, which is exactly the outcome worth preventing.
+    ///
+    /// Read from disk on each call rather than cached. The file belongs to the
+    /// person, who may well edit it in a text editor while this window is
+    /// open, and it is a few kilobytes: a cache here would buy nothing and
+    /// could disagree with what they can see on screen.
+    [[nodiscard]] int storedMeasurementCount();
+
+    /// Convenience for the caller that only needs the yes/no.
+    [[nodiscard]] bool hasStoredMeasurements() { return storedMeasurementCount() > 0; }
+
     /// Writes the history when the session calls for it, then the image.
     ///
     /// The order matters: a measurement that is recorded but not pictured can

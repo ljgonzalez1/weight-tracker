@@ -19,7 +19,12 @@ set(WEIGHT_HEADLESS_TESTS
     test_platform_integration)
 
 set(WEIGHT_WIDGET_TESTS
-    test_validators)
+    test_validators
+    # Needs a QApplication and therefore a platform plugin, which is why it
+    # sits with the widget tests rather than the headless ones. It still runs
+    # without a display: QT_QPA_PLATFORM=offscreen is set below for every
+    # suite.
+    test_input_page)
 
 function(weight_add_test test_name link_target)
     add_executable(${test_name} "unit/${test_name}.cpp")

@@ -58,6 +58,10 @@ private:
 
     void onContinue();
     void onViewChartOnly();
+
+    /// Asks the controller whether the history holds anything and tells the
+    /// input page, which is what enables or disables "View chart only".
+    void refreshHistoryAvailability();
     void onPreviewOptionsChanged();
     void onSmoothnessCommitted();
     void onSave();

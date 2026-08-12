@@ -9,13 +9,45 @@ build/package-staging/     scratch, disposable with the rest of build/
 target/packages/           the artefacts
 ```
 
+## The whole thing in four lines
+
+```sh
+cd weight/weight            # the project directory, not the repository root
+mkdir build && cd build
+cmake ..
+make package                # deb on Linux, dmg on macOS, folder+zip on Windows
+```
+
+`make package` is an alias for whichever of `deb`, `dmg` and `dist` applies to
+the machine you are on. Each is also available by name, and each **rebuilds
+what it needs first** — you do not have to run `make` beforehand.
+
+| Command | Platform | Result |
+|---|---|---|
+| `make deb` | Linux | `target/packages/weight_<version>_<arch>.deb` |
+| `make dmg` | macOS | `target/packages/Weight-<version>-<archs>.dmg` |
+| `make dist` | Windows | `target/packages/weight-<version>-windows-<arch>/` and `.zip` |
+| `make package` | any | whichever of the three applies |
+
+Nothing is installed by any of them. Installing is a separate, explicit step:
+
+```sh
+sudo apt install ../target/packages/weight_0.50.0_amd64.deb   # Linux
+sudo make install                                              # from source, any platform
+sudo make uninstall                                            # removes exactly that
+```
+
+`make deb` needs no privileges. If you ever ran it under `sudo`, the leftovers
+are root-owned; the next run detects that and prints the exact `rm` command
+instead of failing with "permission denied".
+
 ---
 
 ## Linux — `make deb`
 
 ```sh
 cd build && cmake .. && make deb
-sudo apt install ../target/packages/weight_0.49.0_amd64.deb
+sudo apt install ../target/packages/weight_0.50.0_amd64.deb
 ```
 
 `apt install` rather than `dpkg -i`, because apt resolves the dependencies the
@@ -96,6 +128,46 @@ login.
 **Removal never deletes data.** Neither `remove` nor `purge` touches the
 workspace folder. `weight-data.csv`, the images and `config.txt` belong to the
 person, not to the package.
+
+### Permissions, and the two ways they go wrong
+
+`dpkg-deb` refuses to build a package whose control directory is group- or
+world-writable:
+
+```
+dpkg-deb: error: control directory has bad permissions 777 (must be >=0755 and <=0775)
+```
+
+Both causes are environmental, neither is your mistake, and the script now
+handles both.
+
+**A permissive umask.** `mkdir` applies the caller's `umask`, so with
+`umask 000` — which some desktop sessions and many shell configurations set —
+every staged directory comes out `0777`. The script therefore sets its own
+`umask 022` and states the mode of everything it writes explicitly: directories
+`0755`, files `0644`, the binary and the maintainer scripts `0755`. Ownership
+is forced to `root:root` by `--root-owner-group`, so the package does not carry
+your user id either.
+
+**A filesystem that has no permissions to set.** If the build tree is on an
+NTFS or exFAT partition — the usual arrangement when the source lives on a
+partition shared with Windows — `chmod` succeeds and changes nothing, because
+the mount fixes the mode for every file. Setting a umask cannot fix that.
+
+So the script verifies rather than assumes: it creates a probe directory, sets
+it to `0755`, reads the mode back, and if the filesystem did not store it,
+stages the package under `$TMPDIR` instead and says why:
+
+```
+==> .../build/package-staging/deb is on a filesystem that does not store POSIX
+    permissions (usually NTFS or exFAT). dpkg-deb requires the control
+    directory to be 0755, so the package is being staged under ${TMPDIR:-/tmp}.
+```
+
+The resulting `.deb` is identical either way: a package records its own modes,
+so where it was assembled does not survive into it. If `$TMPDIR` is also on
+such a filesystem, the script stops and tells you to point `TMPDIR` somewhere
+that is not.
 
 ---
 

@@ -93,9 +93,12 @@ void MainWindow::showInputPage() {
     previewPage_->hide();
     inputPage_->show();
     currentPage_ = Page::Input;
-    for (QWidget* widget : inputPage_->interactiveWidgets()) {
-        widget->setEnabled(true);
-    }
+    // Asked again on every return to this page rather than once at startup:
+    // the history changes underneath the window when a measurement is saved,
+    // and it can change outside the window entirely, because the file is a
+    // plain CSV the person is invited to edit.
+    refreshHistoryAvailability();
+    inputPage_->setInputsEnabled(true);
     refitToCurrentPage();
     inputPage_->focusPrimaryField();
 }
@@ -150,24 +153,18 @@ void MainWindow::enterPreviewFor(app::PendingSession session) {
 
 void MainWindow::onContinue() {
     inputPage_->clearError();
-    for (QWidget* widget : inputPage_->interactiveWidgets()) {
-        widget->setEnabled(false);
-    }
+    inputPage_->setInputsEnabled(false);
 
     const auto measurement = inputPage_->readMeasurement();
     if (!measurement.has_value()) {
-        for (QWidget* widget : inputPage_->interactiveWidgets()) {
-            widget->setEnabled(true);
-        }
+        inputPage_->setInputsEnabled(true);
         return;  // the page has already explained what is wrong
     }
 
     core::Result<app::PendingSession> session =
         controller_->buildSessionWithMeasurement(measurement->first, measurement->second);
     if (!session) {
-        for (QWidget* widget : inputPage_->interactiveWidgets()) {
-            widget->setEnabled(true);
-        }
+        inputPage_->setInputsEnabled(true);
         inputPage_->showError(session.error().toString());
         core::log::error(session.error().toString());
         return;
@@ -175,8 +172,22 @@ void MainWindow::onContinue() {
     enterPreviewFor(std::move(session.value()));
 }
 
+void MainWindow::refreshHistoryAvailability() {
+    inputPage_->setHistoryAvailable(controller_->hasStoredMeasurements());
+}
+
 void MainWindow::onViewChartOnly() {
     inputPage_->clearError();
+    // The button is disabled without stored measurements, so this is not the
+    // path an ordinary click takes. It is still checked, because a disabled
+    // button is a courtesy and not a guarantee: the signal can also arrive
+    // from a keyboard shortcut, a style that ignores the disabled state, or a
+    // history that was emptied by hand since the page was shown.
+    if (!controller_->hasStoredMeasurements()) {
+        inputPage_->setHistoryAvailable(false);
+        inputPage_->showError(Strings::get(QStringLiteral("error.no.history")));
+        return;
+    }
     core::Result<app::PendingSession> session = controller_->buildSessionForViewing();
     if (!session) {
         inputPage_->showError(session.error().toString());
@@ -350,9 +361,7 @@ void MainWindow::showFatalError(const QString& details) {
     core::log::error(details);
 
     inputPage_->showError(Strings::get(QStringLiteral("error.fatal")));
-    for (QWidget* widget : inputPage_->interactiveWidgets()) {
-        widget->setEnabled(false);
-    }
+    inputPage_->setInputsEnabled(false);
     previewPage_->setControlsEnabled(false);
 
     if (diagnosticsBox_ == nullptr) {

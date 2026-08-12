@@ -28,22 +28,34 @@ public:
     ///
     /// The chain, highest priority first:
     ///
-    ///   1. `WEIGHT_LANG`      — an explicit override, mainly for testing
-    ///   2. `LC_ALL`           — POSIX: overrides every other category
-    ///   3. `LC_MESSAGES`      — POSIX: the category that governs UI text
-    ///   4. `LANG`             — POSIX: the general fallback
-    ///   5. `QLocale::system()` — Qt's own view, which on Windows and macOS
-    ///                            reads the platform's UI language rather than
-    ///                            the POSIX variables
+    ///   1. `WEIGHT_LANG`   — an explicit override, mainly for testing
+    ///   2. the POSIX environment — `LC_ALL`, `LC_MESSAGES`, `LANG`, with
+    ///      `LANGUAGE` given the priority GNU software gives it (and ignored
+    ///      when the resolved locale is `C`, which is the documented exception)
+    ///   3. the operating system's own UI-language interface —
+    ///      `GetUserPreferredUILanguages` on Windows,
+    ///      `CFLocaleCopyPreferredLanguages` on macOS,
+    ///      `setlocale(LC_MESSAGES, "")` on POSIX
+    ///   4. `QLocale::system()` — Qt's own view, as a last resort
     ///
-    /// A value of `C` or `POSIX` at any step means "no locale configured", and
-    /// selects English, as the brief requires. Anything beginning `es` selects
-    /// Spanish; anything beginning `en` selects English; anything else falls
-    /// back to English.
+    /// Step 3 is a list, not a single value: both Windows and macOS let the
+    /// user rank several languages, and the first *supported* one wins. A
+    /// machine ranked `de, es, en` gets Spanish, which is the whole point of
+    /// the ranking and is what every other application on it does.
+    ///
+    /// The mapping applied to each candidate is decided by the **primary
+    /// language subtag**, never by a string prefix:
+    ///
+    /// | Tag                                     | Language |
+    /// |-----------------------------------------|----------|
+    /// | `es`, `es_CL`, `es-419`, `es_ES.UTF-8`, `es-Latn-MX@valencia`, `spa` | Spanish |
+    /// | `en`, `en_US`, `en-GB`, `eng`           | English  |
+    /// | anything else (`de_DE`, `pt_BR`, `ja`)  | English  |
+    /// | `C`, `POSIX`, `C.UTF-8`, unset          | English  |
     ///
     /// Spanish is chosen only when the system both *supports* and *uses* it:
-    /// an `es_*` value in one of these variables is exactly that statement, and
-    /// a bare `C` is exactly its absence.
+    /// an `es_*` value in one of those places is exactly that statement, and a
+    /// bare `C` is exactly its absence.
     static void detectAndInstall();
 
     /// Installs a language explicitly, bypassing detection.
@@ -78,6 +90,23 @@ public:
     /// Maps a locale tag onto a supported language. Exposed for testing, since
     /// the mapping is the part most likely to be got wrong.
     [[nodiscard]] static Language languageForTag(const QString& tag);
+
+    /// The primary language subtag, lowercased and stripped of everything
+    /// else: `es_CL.UTF-8` and `es-Latn-419@valencia` both give `es`.
+    ///
+    /// Exposed because it is the part that decides the language, and because
+    /// the naive alternative — asking whether the tag *starts with* "es" — is
+    /// wrong in both directions. It says yes to Estonian written in the
+    /// three-letter form (`est_EE`) and, on a Windows machine that reports
+    /// `sr-Cyrl-RS`, it invites the same class of mistake for every other
+    /// language. Splitting the tag and comparing whole subtags cannot.
+    [[nodiscard]] static QString primaryLanguageSubtag(const QString& tag);
+
+    /// True when the tag names a language this program actually ships text
+    /// for. Distinct from `languageForTag`, which always returns something:
+    /// the difference is what lets a ranked list like `de, es, en` skip past
+    /// German instead of stopping at it and answering English.
+    [[nodiscard]] static bool tagIsSupported(const QString& tag);
 
     /// True when the tag means "no locale configured".
     [[nodiscard]] static bool tagIsNeutral(const QString& tag);

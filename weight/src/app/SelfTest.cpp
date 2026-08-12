@@ -111,12 +111,59 @@ int runSelfTest(const settings::Settings& baseSettings) {
     recorder.check(settings::Strings::languageForTag(QStringLiteral("C"))
                        == settings::Language::English,
                    QStringLiteral("a bare C locale selects English"));
-    recorder.check(settings::Strings::languageForTag(QStringLiteral("es_CL.UTF-8"))
-                       == settings::Language::Spanish,
-                   QStringLiteral("es_* selects Spanish"));
-    recorder.check(settings::Strings::languageForTag(QStringLiteral("de_DE"))
-                       == settings::Language::English,
-                   QStringLiteral("an unsupported locale falls back to English"));
+
+    // Every Spanish locale, not only the one this was first written against.
+    // A machine in Mexico, Argentina or the United States running es_US is as
+    // much a Spanish machine as one running es_CL.
+    {
+        bool allSpanish = true;
+        QString firstFailure;
+        for (const QString& tag : {QStringLiteral("es"), QStringLiteral("es_CL.UTF-8"),
+                                   QStringLiteral("es_ES"), QStringLiteral("es_MX.UTF-8"),
+                                   QStringLiteral("es_AR"), QStringLiteral("es_US.UTF-8"),
+                                   QStringLiteral("es-419"), QStringLiteral("es-Latn-MX"),
+                                   QStringLiteral("spa")}) {
+            if (settings::Strings::languageForTag(tag) != settings::Language::Spanish) {
+                allSpanish = false;
+                if (firstFailure.isEmpty()) {
+                    firstFailure = tag;
+                }
+            }
+        }
+        recorder.check(allSpanish, QStringLiteral("every es_* tag selects Spanish"),
+                       firstFailure);
+    }
+
+    {
+        bool allEnglish = true;
+        QString firstFailure;
+        for (const QString& tag : {QStringLiteral("en"), QStringLiteral("en_US.UTF-8"),
+                                   QStringLiteral("en_GB"), QStringLiteral("en-IN"),
+                                   // Unsupported languages, and the two that a
+                                   // "starts with es" test would wrongly claim.
+                                   QStringLiteral("de_DE"), QStringLiteral("ja_JP"),
+                                   QStringLiteral("et_EE"), QStringLiteral("est_EE"),
+                                   QStringLiteral("eo"), QStringLiteral("POSIX")}) {
+            if (settings::Strings::languageForTag(tag) != settings::Language::English) {
+                allEnglish = false;
+                if (firstFailure.isEmpty()) {
+                    firstFailure = tag;
+                }
+            }
+        }
+        recorder.check(allEnglish,
+                       QStringLiteral("en_* and everything unsupported select English"),
+                       firstFailure);
+    }
+
+    recorder.check(settings::Strings::primaryLanguageSubtag(QStringLiteral("es_CL.UTF-8@x"))
+                       == QStringLiteral("es"),
+                   QStringLiteral("the language is read from the primary subtag"));
+    recorder.check(!settings::Strings::detectionSource().isEmpty(),
+                   QStringLiteral("the detected language names where it came from"),
+                   QStringLiteral("%1 (from %2)")
+                       .arg(settings::Strings::detectedTag(),
+                            settings::Strings::detectionSource()));
     recorder.check(settings::Strings::keys(settings::Language::English).size()
                        == settings::Strings::keys(settings::Language::Spanish).size(),
                    QStringLiteral("both languages define the same number of strings"));

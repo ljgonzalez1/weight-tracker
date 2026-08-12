@@ -71,6 +71,33 @@ foreach(config DEBUG RELEASE RELWITHDEBINFO MINSIZEREL)
     set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${config} "${WEIGHT_TARGET_DIR}")
 endforeach()
 
+# ---------------------------------------------------------------------------
+# Recreating target/ at BUILD time, not only at configure time.
+#
+# This is the fix for:
+#
+#     [ 57%] Linking CXX executable .../target/weight
+#     /usr/bin/ld: cannot open output file .../target/weight: No such file or directory
+#
+# CMake creates the runtime output directory while *generating*, and never
+# again. target/ is also listed in ADDITIONAL_CLEAN_FILES, so `make clean`
+# removes it — and from that moment every `make`, `make deb` and `make package`
+# fails at the link step until somebody re-runs `cmake ..`, which is not a
+# thing anyone should have to know.
+#
+# PRE_BUILD is treated as PRE_LINK by every generator except Visual Studio, so
+# on all of them the directory is recreated immediately before the linker is
+# invoked, in the same rule. If the directory was removed by hand the target's
+# output file is missing too, so the target is considered out of date and the
+# rule runs. There is no ordering in which the linker can run first.
+# ---------------------------------------------------------------------------
+function(weight_ensure_output_directory target directory)
+    add_custom_command(TARGET ${target} PRE_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${directory}"
+        COMMENT "Making sure ${directory} exists"
+        VERBATIM)
+endfunction()
+
 # macOS: build for both architectures unless the caller says otherwise, so one
 # binary runs on Intel and Apple silicon. Requires a universal Qt; if yours is
 # single-architecture, pass -DCMAKE_OSX_ARCHITECTURES=arm64 (or x86_64).
@@ -158,6 +185,7 @@ add_library(weight_core STATIC
 
     src/platform/Workspace.cpp
     src/platform/SingleInstance.cpp
+    src/platform/SystemLocale.cpp
 
     src/plot/PlotScene.cpp
     src/plot/AxisWindow.cpp
@@ -179,6 +207,18 @@ target_include_directories(weight_core PUBLIC
 
 target_link_libraries(weight_core PUBLIC
     Qt6::Core Qt6::Gui Qt6::Network Qt6::Concurrent)
+
+# src/platform/SystemLocale.cpp reads the operating system's own UI-language
+# list. On macOS that is CFLocaleCopyPreferredLanguages, which lives in
+# CoreFoundation; Qt links it transitively today, but relying on that would
+# mean this file breaks the day Qt stops. On Windows the equivalent call,
+# GetUserPreferredUILanguages, is in kernel32, which both MSVC and MinGW link
+# by default. On Linux setlocale is in the C library.
+if(APPLE)
+    find_library(WEIGHT_CORE_FOUNDATION CoreFoundation REQUIRED)
+    target_link_libraries(weight_core PUBLIC "${WEIGHT_CORE_FOUNDATION}")
+endif()
+
 weight_apply_compiler_options(weight_core)
 
 # ---------------------------------------------------------------------------
@@ -243,6 +283,10 @@ endif()
 
 target_link_libraries(weight PRIVATE weight_ui)
 weight_apply_compiler_options(weight)
+
+# The only target that writes into target/, and therefore the only one that
+# needs the directory guaranteed to exist at link time.
+weight_ensure_output_directory(weight "${WEIGHT_TARGET_DIR}")
 
 
 # ---------------------------------------------------------------------------
@@ -380,8 +424,13 @@ add_custom_target(uninstall
     COMMAND "${CMAKE_COMMAND}" -P "${CMAKE_CURRENT_BINARY_DIR}/Uninstall.cmake"
     COMMENT "Removing installed files (your data is never touched)")
 
+# Each packaging target creates the directories it writes into before it runs
+# a single command, for the same reason the executable does: `make clean`
+# removes target/, and a packaging run must not be the thing that discovers it.
 if(UNIX AND NOT APPLE)
     add_custom_target(deb
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_PACKAGE_DIR}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_STAGING_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E env
                 "WEIGHT_BUILD_DIR=${CMAKE_BINARY_DIR}"
                 "WEIGHT_TARGET_DIR=${WEIGHT_TARGET_DIR}"
@@ -395,6 +444,8 @@ endif()
 
 if(APPLE)
     add_custom_target(dmg
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_PACKAGE_DIR}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_STAGING_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E env
                 "WEIGHT_BUILD_DIR=${CMAKE_BINARY_DIR}"
                 "WEIGHT_TARGET_DIR=${WEIGHT_TARGET_DIR}"
@@ -411,6 +462,8 @@ if(WIN32)
     # Not an MSI and not an AppImage-style single file: the brief asks for a
     # binary, and this is the binary with exactly what it needs beside it.
     add_custom_target(dist
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_PACKAGE_DIR}"
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${WEIGHT_STAGING_DIR}"
         COMMAND "${CMAKE_COMMAND}" -E env
                 "WEIGHT_BUILD_DIR=${CMAKE_BINARY_DIR}"
                 "WEIGHT_TARGET_DIR=${WEIGHT_TARGET_DIR}"
